@@ -133,6 +133,8 @@ describe("developer account sign-in", () => {
   afterEach(() => {
     delete process.env.DEV_ACCOUNT_PHONE;
     delete process.env.DEV_ACCOUNT_OTP;
+    delete process.env.DEV_ACCOUNT_PHONE_2;
+    delete process.env.DEV_ACCOUNT_OTP_2;
     delete process.env.REVIEW_ACCOUNT_PHONE;
     delete process.env.REVIEW_ACCOUNT_OTP;
   });
@@ -163,6 +165,22 @@ describe("developer account sign-in", () => {
     // Each code belongs to its own number and must not open the other's.
     await expect(
       verifySignInOtp({ phone: devPhone, code: reviewCode }),
+    ).rejects.toBeInstanceOf(AppError);
+  });
+
+  it("gives the second slot its own fixed code", async () => {
+    const secondPhone = "+639123456789";
+    const secondCode = "615037";
+    process.env.DEV_ACCOUNT_PHONE_2 = "09123456789";
+    process.env.DEV_ACCOUNT_OTP_2 = secondCode;
+
+    expect((await verifySignInOtp({ phone: secondPhone, code: secondCode })).phone).toBe(
+      secondPhone,
+    );
+    expect((await verifySignInOtp({ phone: devPhone, code: devCode })).phone).toBe(devPhone);
+    // One slot's code must not open another slot's number.
+    await expect(
+      verifySignInOtp({ phone: secondPhone, code: devCode }),
     ).rejects.toBeInstanceOf(AppError);
   });
 

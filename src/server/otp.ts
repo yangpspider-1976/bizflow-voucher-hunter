@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { all, getDb, one, run } from "@/server/db";
-import { devToolsEnabled } from "@/server/dev-tools";
+import { DEV_ACCOUNT_ENV_PAIRS, devToolsEnabled } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
 import { normalizePhone } from "@/server/phone";
 import { sendSms, type SmsResult } from "@/server/sms";
@@ -50,11 +50,12 @@ function requireValidPhone(phone: string) {
  *     details that do not expire". An ordinary customer account, no elevated
  *     rights. Unset once review passes — see docs/PLAY_CONSOLE_ANSWERS.md §2.
  *
- *   DEV_ACCOUNT_PHONE / DEV_ACCOUNT_OTP
- *     The production developer account (see `@/server/dev-tools`). The OTP half
- *     is optional and independent of the tools half: leave it unset when the
- *     number is a handset you actually hold, and sign in by real SMS — a code
- *     that never expires is strictly more attack surface than one that does.
+ *   DEV_ACCOUNT_PHONE / DEV_ACCOUNT_OTP  (and the numbered slots after it)
+ *     The production developer accounts (see `@/server/dev-tools`, which owns the
+ *     list of slot names). The OTP half is optional and independent of the tools
+ *     half: leave it unset when the number is a handset you actually hold, and
+ *     sign in by real SMS — a code that never expires is strictly more attack
+ *     surface than one that does.
  *
  * Each pair is inert unless both of its vars are set and the code is six digits,
  * so no deploy acquires one by accident. A fixed code is long-lived, so it wants
@@ -74,7 +75,7 @@ function fixedCodeAccount(phoneVar: string, codeVar: string): FixedCodeAccount |
 function fixedCodeAccountFor(phone: string): FixedCodeAccount | null {
   const accounts = [
     fixedCodeAccount("REVIEW_ACCOUNT_PHONE", "REVIEW_ACCOUNT_OTP"),
-    fixedCodeAccount("DEV_ACCOUNT_PHONE", "DEV_ACCOUNT_OTP"),
+    ...DEV_ACCOUNT_ENV_PAIRS.map((pair) => fixedCodeAccount(pair.phone, pair.otp)),
   ];
   return accounts.find((account) => account?.phone === phone) ?? null;
 }

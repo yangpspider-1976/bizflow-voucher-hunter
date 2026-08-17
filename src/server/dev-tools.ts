@@ -34,12 +34,29 @@ export function assertDevToolsEnabled(what: string) {
 }
 
 /**
- * The production developer account.
+ * The environment variable pairs that name a production developer account.
+ *
+ * One slot was not enough once a second person needed to exercise a hunt against
+ * the live database, so the slots are numbered. Each is independent and inert
+ * until set; the phone half and the OTP half of a slot are also independent of
+ * each other (see `@/server/otp`), which is why they are named together here but
+ * read apart.
+ *
+ * Adding a third is one more entry in this list plus the matching block in
+ * `.env.example` — no other code knows the names.
+ */
+export const DEV_ACCOUNT_ENV_PAIRS = [
+  { phone: "DEV_ACCOUNT_PHONE", otp: "DEV_ACCOUNT_OTP" },
+  { phone: "DEV_ACCOUNT_PHONE_2", otp: "DEV_ACCOUNT_OTP_2" },
+] as const;
+
+/**
+ * The production developer accounts.
  *
  * `devToolsEnabled()` above is all-or-nothing per deployment and never opens in
  * production, which leaves no way to exercise a hunt against the live database.
- * DEV_ACCOUNT_PHONE names one customer number that carries the hunt tools with
- * it into production:
+ * The DEV_ACCOUNT_PHONE slots name customer numbers that carry the hunt tools
+ * with them into production:
  *
  *   POST /api/public/hunt/reset                clears its own hunt, returns stock
  *   POST /api/public/hunt/dev-refresh-vouchers re-dates its own bookings
@@ -49,28 +66,34 @@ export function assertDevToolsEnabled(what: string) {
  * Deliberately NOT included are the tools that move money — LP grants, simulated
  * checkout scans, simulated collection — because those write rows a real partner is
  * billed for. They stay on `devToolsEnabled()` and refuse in production for
- * everyone, this account included.
+ * everyone, these accounts included.
  *
- * Inert unless the var is set to a valid PH mobile number, and it grants no
- * admin/dashboard rights: this is an ordinary customer account with the hunt
- * tools switched on. Unset the var to revoke — it is read per request, so no
- * redeploy is needed.
+ * A slot is inert unless its var is set to a valid PH mobile number, and it
+ * grants no admin/dashboard rights: these are ordinary customer accounts with the
+ * hunt tools switched on. Unset a var to revoke it — they are read per request,
+ * so no redeploy is needed.
  */
-function devAccountPhone(): string | null {
-  const configured = process.env.DEV_ACCOUNT_PHONE?.trim();
-  return configured ? normalizePhone(configured) : null;
+function devAccountPhones(): string[] {
+  const phones: string[] = [];
+  for (const pair of DEV_ACCOUNT_ENV_PAIRS) {
+    const configured = process.env[pair.phone]?.trim();
+    const normalized = configured ? normalizePhone(configured) : null;
+    if (normalized) phones.push(normalized);
+  }
+  return phones;
 }
 
-/** True when `phone` is the configured developer account. Format-insensitive. */
+/** True when `phone` is one of the configured developer accounts. Format-insensitive. */
 function isDevAccountPhone(phone: string | null | undefined): boolean {
-  const account = devAccountPhone();
-  if (!account || !phone) return false;
-  return normalizePhone(phone) === account;
+  if (!phone) return false;
+  const normalized = normalizePhone(phone);
+  if (!normalized) return false;
+  return devAccountPhones().includes(normalized);
 }
 
 /**
  * The hunt-tool gate: open where the whole deployment is a dev environment, or
- * for the one developer account anywhere — including production.
+ * for a configured developer account anywhere — including production.
  */
 export function devToolsEnabledFor(phone: string | null | undefined): boolean {
   return devToolsEnabled() || isDevAccountPhone(phone);
@@ -85,7 +108,7 @@ export function devToolsEnabledFor(phone: string | null | undefined): boolean {
  * looking up who is asking.
  */
 export function devToolsPossible(): boolean {
-  return devToolsEnabled() || devAccountPhone() !== null;
+  return devToolsEnabled() || devAccountPhones().length > 0;
 }
 
 /** Guard for a self-scoped hunt tool the developer account may run in production. */

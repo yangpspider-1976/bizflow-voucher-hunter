@@ -210,9 +210,9 @@ describe("dev-only tooling gate", () => {
   });
 });
 
-// One customer number carries the self-scoped hunt tools into production, where
-// the deployment-wide gate above can never open. Everything that moves money
-// stays shut for it.
+// A handful of customer numbers carry the self-scoped hunt tools into
+// production, where the deployment-wide gate above can never open. Everything
+// that moves money stays shut for them.
 describe("production developer account", () => {
   const DEV_PHONE = "+639614073159";
 
@@ -255,6 +255,22 @@ describe("production developer account", () => {
     vi.stubEnv("DEV_ACCOUNT_PHONE", "not-a-number");
     expect(devToolsEnabledFor(DEV_PHONE)).toBe(false);
     expect(devToolsEnabledFor("not-a-number")).toBe(false);
+  });
+
+  it("opens the tools for the second slot, without closing the first", () => {
+    vi.stubEnv("DEV_ACCOUNT_PHONE_2", "09123456789");
+    expect(devToolsEnabledFor("+639123456789")).toBe(true);
+    expect(devToolsEnabledFor(DEV_PHONE)).toBe(true);
+    expect(devToolsEnabledFor(PHONE)).toBe(false);
+  });
+
+  it("lets a later slot stand on its own when the first is unset", () => {
+    // The slots are independent: skipping one must not shift the others along
+    // or disable them.
+    vi.stubEnv("DEV_ACCOUNT_PHONE", undefined);
+    vi.stubEnv("DEV_ACCOUNT_PHONE_2", "09123456789");
+    expect(devToolsEnabledFor("+639123456789")).toBe(true);
+    expect(devToolsEnabledFor(DEV_PHONE)).toBe(false);
   });
 
   it("still refuses to mint Loyalty Points for the developer account", async () => {

@@ -68,10 +68,12 @@ by re-punctuating. That mattered most to the fixed-code accounts below, whose
 codes are neither expired nor consumed.
 
 **Fixed-code sign-in has no per-challenge attempt limit.** `REVIEW_ACCOUNT_OTP`
-and `DEV_ACCOUNT_OTP` are matched in constant time but never burn a challenge,
-so the only thing bounding a brute force is the verify route's 10 tries per 15
-minutes per number. Use random codes, and unset each one as soon as it is no
-longer needed.
+and the `DEV_ACCOUNT_OTP` slots are matched in constant time but never burn a
+challenge, so the only thing bounding a brute force is the verify route's 10
+tries per 15 minutes per number. Use random codes, and unset each one as soon as
+it is no longer needed. Every configured slot is an independent standing target,
+so the cheapest hardening available here is to keep the count at what is actually
+in use.
 
 **Dev tooling fails closed.** `devToolsEnabled()` opens only for `development`,
 `test`, or an explicit `ENABLE_DEV_TOOLS=true`, and never in production. The
@@ -79,14 +81,15 @@ previous `NODE_ENV !== "production"` test opened free LP, forced roulette
 outcomes, and a published-password super-admin login on any deploy whose NODE_ENV
 was unset, `preview`, or `staging`.
 
-**The production developer account is a second, narrower gate.**
-`DEV_ACCOUNT_PHONE` names one customer number that keeps the hunt tools in
-production: reset my hunt, refresh my vouchers, force my own next draw. Each is
-scoped to rows keyed by the caller's own session phone and is reversible, and the
-number is compared normalised so no spelling of it slips past. The tools that
-move money — LP grants, simulated checkout scans, simulated collection — stay on
-`devToolsEnabled()` and refuse in production for this account too, because those
-write rows a real partner is billed for. It confers no console rights. Both
+**The production developer accounts are a second, narrower gate.** The
+`DEV_ACCOUNT_PHONE` slots (`DEV_ACCOUNT_ENV_PAIRS` in `src/server/dev-tools.ts`)
+name customer numbers that keep the hunt tools in production: reset my hunt,
+refresh my vouchers, force my own next draw. Each is scoped to rows keyed by the
+caller's own session phone and is reversible, and the numbers are compared
+normalised so no spelling of one slips past. The tools that move money — LP
+grants, simulated checkout scans, simulated collection — stay on
+`devToolsEnabled()` and refuse in production for these accounts too, because those
+write rows a real partner is billed for. They confer no console rights. Both
 clients gate their panel at build time, so the flag is also returned from
 `GET /api/public/signin/session`; that response is advisory and every tool
 re-checks the gate server-side.
