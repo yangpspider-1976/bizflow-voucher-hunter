@@ -25,6 +25,8 @@ export const formSkeletons = {
   ],
   /** One card: the current artwork above the file picker that replaces it. */
   campaignImage: [{ media: true, fields: 1 }],
+  /** Schedule and status, hunt rules, content. Business and category are fixed. */
+  editCampaign: [{ fields: 3 }, { fields: 3 }, { fields: 4 }],
   newSlot: [{ fields: 5 }],
   /** Benefit, expiry, availability - the three cards `PoolForm` renders. */
   newPool: [{ fields: 6 }, { fields: 3 }, { fields: 2 }],

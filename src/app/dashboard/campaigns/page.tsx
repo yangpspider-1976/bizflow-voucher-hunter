@@ -1,4 +1,4 @@
-import { FiEdit2 } from "react-icons/fi";
+import { FiEdit2, FiImage } from "react-icons/fi";
 import { CampaignFlagToggles } from "../_components/CampaignFlagToggles";
 import { FlashNotice } from "../_components/FlashNotice";
 import { FormLink } from "../_components/FormLink";
@@ -77,14 +77,24 @@ export default async function CampaignsPage() {
                   <td>
                     <div className="campaign-table-title">
                       <div className="cell-title">{campaign.title}</div>
-                      <FormLink
-                        className="campaign-edit-image-button"
-                        href={`/dashboard/campaigns/${campaign.id}/image`}
-                        skeleton="campaignImage"
-                      >
-                        <FiEdit2 aria-hidden="true" />
-                        Edit image
-                      </FormLink>
+                      <div className="campaign-table-actions">
+                        <FormLink
+                          className="campaign-edit-image-button"
+                          href={`/dashboard/campaigns/${campaign.id}/edit`}
+                          skeleton="editCampaign"
+                        >
+                          <FiEdit2 aria-hidden="true" />
+                          Edit
+                        </FormLink>
+                        <FormLink
+                          className="campaign-edit-image-button"
+                          href={`/dashboard/campaigns/${campaign.id}/image`}
+                          skeleton="campaignImage"
+                        >
+                          <FiImage aria-hidden="true" />
+                          Edit image
+                        </FormLink>
+                      </div>
                     </div>
                   </td>
                   <td>{businesses.find((b) => b.id === campaign.businessId)?.name ?? "-"}</td>

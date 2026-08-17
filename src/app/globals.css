@@ -3587,6 +3587,14 @@ th {
     justify-content: space-between;
     gap: 12px;
 }
+/* Holds the row's Edit / Edit image pair so `.campaign-table-title` keeps the
+   two children its space-between layout expects. */
+.campaign-table-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
 .campaign-edit-image-button {
     flex: 0 0 auto;
     min-height: 30px;

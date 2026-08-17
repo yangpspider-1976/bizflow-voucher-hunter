@@ -2,7 +2,19 @@ import crypto from "node:crypto";
 import type { InArgs } from "@libsql/client";
 import { benefitValueProblem, RARITY_WEIGHTS, type VoucherRarity } from "@bizflow/shared";
 import { AppError } from "@/server/errors";
-import { all, batchAll, getDb, mapBusiness, mapCampaign, mapPool, mapSlot, one, run, type Exec } from "@/server/db";
+import {
+  all,
+  batchAll,
+  getDb,
+  manilaDateString,
+  mapBusiness,
+  mapCampaign,
+  mapPool,
+  mapSlot,
+  one,
+  run,
+  type Exec
+} from "@/server/db";
 import type { Business, Campaign, CampaignSlot, VoucherPool } from "@/types/voucher";
 
 const id = (prefix: string) => `${prefix}_${crypto.randomBytes(6).toString("hex")}`;
@@ -318,6 +330,21 @@ export async function updateCampaign(idOrSlug: string, patch: Partial<CreateCamp
   if (patch.baseAttempts !== undefined && patch.baseAttempts < 1) {
     throw new AppError("E-CAMPAIGN-ATTEMPTS", "baseAttempts must be at least 1", 422);
   }
+  // Only when the window itself moves: an admin editing the title of a campaign
+  // that is already inconsistent should not be blocked by a slot they are not
+  // touching. Narrowing the dates onto a bookable slot is the case worth
+  // refusing, and it is the one that strands the campaign.
+  if (patch.startDate !== undefined || patch.endDate !== undefined) {
+    const stranded = await upcomingSlotsOutsideWindow(db, current.id, startDate, endDate);
+    if (stranded.length > 0) {
+      throw new AppError(
+        "E-CAMPAIGN-WINDOW-SLOTS",
+        `Campaign window ${startDate} to ${endDate} would leave ${stranded.length === 1 ? "an upcoming slot" : "upcoming slots"} outside it: ${stranded.join(", ")}. Widen the dates to cover them, or close those slots first.`,
+        422,
+        { strandedSlotDates: stranded }
+      );
+    }
+  }
   const sets: string[] = [];
   const values: Array<string | number> = [];
   for (const [key, column] of Object.entries(CAMPAIGN_PATCH_COLUMNS)) {
@@ -333,6 +360,42 @@ export async function updateCampaign(idOrSlug: string, patch: Partial<CreateCamp
   return getCampaign(current.id);
 }
 
+/**
+ * A campaign's window has to contain every slot customers can still book.
+ *
+ * Both halves of this are the same defect seen from opposite ends: a slot dated
+ * outside its campaign is invisible in the public directory, because the
+ * directory drops campaigns whose `end_date` has passed while the draw happily
+ * keeps offering the stranded slot. The campaign then reads as fully bookable in
+ * the dashboard and does not exist at all in the app, with nothing anywhere
+ * saying why. Dates are ISO `YYYY-MM-DD`, so string comparison is chronological.
+ */
+function slotOutsideWindow(date: string, startDate: string, endDate: string) {
+  return date < startDate || date > endDate;
+}
+
+/**
+ * Upcoming slots only. Past slots are a record of what already happened, and the
+ * bundled demo campaigns deliberately leave their original fixture dates behind
+ * when the window rolls forward — validating those would make every demo
+ * campaign permanently uneditable.
+ */
+async function upcomingSlotsOutsideWindow(
+  db: Exec,
+  campaignId: string,
+  startDate: string,
+  endDate: string
+): Promise<string[]> {
+  const rows = await all(
+    db,
+    `SELECT DISTINCT date FROM slots
+     WHERE campaign_id = ? AND date >= ? AND (date < ? OR date > ?)
+     ORDER BY date`,
+    [campaignId, manilaDateString(), startDate, endDate]
+  );
+  return rows.map((row) => String(row.date));
+}
+
 export async function listSlots(campaignIdOrSlug: string): Promise<CampaignSlot[]> {
   const db = await getDb();
   const campaign = await getCampaign(campaignIdOrSlug);
@@ -345,6 +408,13 @@ export async function createSlot(campaignIdOrSlug: string, input: CreateSlotInpu
   if (input.totalCapacity < 1) throw new AppError("E-SLOT-CAPACITY", "totalCapacity must be at least 1", 422);
   if (input.endTime <= input.startTime) {
     throw new AppError("E-SLOT-TIME", "Slot endTime must be after startTime", 422);
+  }
+  if (slotOutsideWindow(input.date, campaign.startDate, campaign.endDate)) {
+    throw new AppError(
+      "E-SLOT-WINDOW",
+      `Slot date ${input.date} is outside the campaign window (${campaign.startDate} to ${campaign.endDate}). Extend the campaign dates first, or pick a date inside them.`,
+      422
+    );
   }
   const slot: CampaignSlot = {
     id: id("slot"),
