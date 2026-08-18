@@ -756,18 +756,52 @@ export function generateCandidate(input: {
  * decides when it can be booked, never how often it is won.
  * Called after the user picks 1 of their candidates, before final confirmation.
  */
+/**
+ * The hunt user for a campaign, read through a transaction.
+ *
+ * The transaction is not for atomicity — this is a single statement. It is
+ * because the plain read is not reliable against the deployed libSQL. Measured
+ * in production on 2026-08-18: `SELECT * FROM users WHERE campaign_id = ? AND
+ * phone = ?` returned no row through `getDb()` for every dashboard-created
+ * campaign (dog-mania, pet-pamper-palooza, and a fresh one made minutes
+ * earlier), while the identical statement with the same arguments returned the
+ * row every time from inside a transaction — `findOrCreateUser` found it on
+ * three consecutive calls. The three seeded campaigns were unaffected, and two
+ * different phone numbers behaved the same, so it tracks the campaign rather
+ * than the caller.
+ *
+ * The rows were demonstrably present: `PRAGMA integrity_check` returned ok,
+ * there were no duplicate slugs, and `campaign_id`/`phone` matched byte for
+ * byte with no stray whitespace. The customer-visible effect was that anyone on
+ * a real campaign could draw a voucher and then never book it, because every
+ * read path to this row 404'd.
+ *
+ * So the write path's view is the one to trust for identity. Only this lookup is
+ * routed that way; the rows it guards (attempts, slots) are still read plainly,
+ * since a stale read there degrades gracefully and this one does not.
+ *
+ * This treats a symptom — the root cause is below the application and is still
+ * open with Turso. Remove it once a plain read of `users` is trustworthy.
+ */
+async function huntUserOrThrow(campaignId: string, phone: string): Promise<EndUser> {
+  const normalized = normalizePhone(phone);
+  const userRow = normalized
+    ? await withTx((tx) =>
+        one(tx, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaignId, normalized])
+      )
+    : undefined;
+  if (!userRow) throw new AppError("E-USER-404", "No hunt session found for this phone number", 404);
+  return mapUser(userRow);
+}
+
 export async function listSlotsForAttempt(input: { campaignSlug: string; phone: string; attemptId: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  const normalized = normalizePhone(input.phone);
-  const userRow = normalized
-    ? await one(db, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaign.id, normalized])
-    : undefined;
-  if (!userRow) throw new AppError("E-USER-404", "No hunt session found for this phone number", 404);
+  const user = await huntUserOrThrow(campaign.id, input.phone);
   const attemptRow = await one(db, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
     input.attemptId,
     campaign.id,
-    mapUser(userRow).id
+    user.id
   ]);
   if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
   const attempt = mapAttempt(attemptRow);
@@ -1262,10 +1296,8 @@ async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
 export async function getHuntSnapshot(input: { campaignSlug: string; phone: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  const normalized = normalizePhone(input.phone);
-  const userRow = normalized ? await one(db, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaign.id, normalized]) : undefined;
-  if (!userRow) throw new AppError("E-USER-404", "No hunt session found for this phone number", 404);
-  return huntState(db, campaign, mapUser(userRow));
+  const user = await huntUserOrThrow(campaign.id, input.phone);
+  return huntState(db, campaign, user);
 }
 
 /**
