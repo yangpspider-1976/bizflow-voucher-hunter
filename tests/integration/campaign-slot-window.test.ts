@@ -71,7 +71,7 @@ describe("campaign window contains its bookable slots", () => {
 
     it("saves a widened end date, which is how a stranded campaign is rescued", async () => {
       // Exactly the production shape: campaign closed before its only slot, so
-      // the app never lists it even though the draw reports it as bookable.
+      // the app lists it as finished even though the draw reports it as bookable.
       const campaign = await campaignWithWindow("api-rescue", "2026-07-01", "2026-07-02");
       const db = await getDb();
       await run(
@@ -104,7 +104,7 @@ describe("campaign window contains its bookable slots", () => {
       expect((await widened.json()).data.endDate).toBe("2026-07-31");
       expect(
         (await listPublicCampaignCards()).find((card) => card.campaign.slug === "api-rescue")
-      ).toBeDefined();
+      ).toMatchObject({ ended: false });
     });
   });
 
@@ -194,14 +194,16 @@ describe("campaign window contains its bookable slots", () => {
          VALUES ('slot_legacy_stranded', ?, '2026-07-20', '15:00', '17:00', 'Asia/Manila', NULL, 20, 20, 'active')`,
         [campaign.id]
       );
+      // Its window closed yesterday, so the card is there but closed: no way
+      // in for a customer, whatever the stranded slot still holds.
       expect(
         (await listPublicCampaignCards()).find((card) => card.campaign.slug === "rescue")
-      ).toBeUndefined();
+      ).toMatchObject({ ended: true });
 
       const fixed = await updateCampaign(campaign.id, { endDate: "2026-07-31" });
       expect(fixed.endDate).toBe("2026-07-31");
       const card = (await listPublicCampaignCards()).find((c) => c.campaign.slug === "rescue");
-      expect(card).toBeDefined();
+      expect(card).toMatchObject({ ended: false });
     });
 
     it("ignores slots already in the past", async () => {

@@ -128,8 +128,10 @@ export function MarketingHome({
   const locale = dateLocale(language);
 
   // Proof, not filler: with nothing live the section is dropped rather than
-  // shown empty, which would argue against the page it sits on.
-  const showcase = campaigns.slice(0, 3);
+  // shown empty, which would argue against the page it sits on. Finished
+  // campaigns ride along in the directory feed for the app's benefit; they
+  // prove nothing here, so they are left out.
+  const showcase = campaigns.filter((card) => !card.ended).slice(0, 3);
 
   return (
     // `lang` sits here rather than on <html> so the root layout stays static for

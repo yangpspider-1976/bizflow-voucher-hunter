@@ -4,6 +4,7 @@ import { generateQrToken, generateVoucherCode } from "@/server/codes";
 import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
 import {
+  addCalendarDays,
   all,
   batchAll,
   getDb,
@@ -481,44 +482,67 @@ const NO_AVAILABILITY: CampaignAvailability = {
 };
 
 /**
- * Active, unfinished campaigns joined with their business, for the public
- * directory grid. Campaigns past their end date are dropped outright — they
- * never reopen — while ones that are merely full stay listed so the client can
- * show them as unavailable, keeping their page reachable for customers holding
- * an unbooked voucher.
+ * How long a finished campaign stays in the directory after it ends. Long
+ * enough that a customer who was hunting it last week finds out what happened
+ * instead of watching the card disappear, short enough that the list stays a
+ * directory rather than an archive.
+ */
+const ENDED_CARD_RETENTION_DAYS = 30;
+
+/**
+ * Campaigns joined with their business, for the public directory grid, most
+ * recently started first. Three states share the list, in this order: ones a
+ * customer can hunt now, ones that are merely full — their page stays reachable
+ * for customers holding an unbooked voucher, and capacity comes back when a
+ * booking is cancelled — and finally ones that are over, which the client shows
+ * as closed rather than dropping. Paused campaigns are a business hiding a
+ * campaign it intends to resume, so those stay out of the list entirely.
  */
 export async function listPublicCampaignCards(): Promise<CampaignCard[]> {
   const db = await getDb();
+  const today = manilaDateString();
   const rows = await all(
     db,
     `SELECT c.*, b.name AS business_name, b.logo_text AS business_logo, b.industry AS business_industry,
             b.address AS business_address, b.contact_number AS business_contact_number
      FROM campaigns c JOIN businesses b ON b.id = c.business_id
-     WHERE c.status = 'active' AND c.end_date >= ?
+     WHERE c.status IN ('active', 'closed') AND c.end_date >= ?
      ORDER BY c.start_date DESC, c.id DESC`,
-    [manilaDateString()]
+    [addCalendarDays(today, -ENDED_CARD_RETENTION_DAYS)]
   );
   const availability = await availabilityByCampaign(
     db,
     rows.map((r) => String(r.id))
   );
   return rows
-    .map((r) => ({
-      campaign: mapCampaign(r),
-      businessName: String(r.business_name),
-      businessLogo: String(r.business_logo),
-      businessIndustry: String(r.business_industry),
-      businessAddress: r.business_address ? String(r.business_address) : undefined,
-      businessContactNumber: r.business_contact_number
-        ? String(r.business_contact_number)
-        : undefined,
-      availability: availability.get(String(r.id)) ?? NO_AVAILABILITY
-    }))
-    // Full campaigns keep their place in the directory but sink below the ones
-    // a customer can act on. Array#sort is stable, so date order is preserved
-    // within each group.
+    .map((r) => {
+      const campaign = mapCampaign(r);
+      const ended = campaign.status !== "active" || campaign.endDate < today;
+      return {
+        campaign,
+        businessName: String(r.business_name),
+        businessLogo: String(r.business_logo),
+        businessIndustry: String(r.business_industry),
+        businessAddress: r.business_address ? String(r.business_address) : undefined,
+        businessContactNumber: r.business_contact_number
+          ? String(r.business_contact_number)
+          : undefined,
+        // A campaign that is over cannot be hunted whatever its inventory says,
+        // and the hunt endpoints agree: a closed one 404s. Saying so here keeps
+        // the client from offering a call to action the server would refuse.
+        availability: ended
+          ? NO_AVAILABILITY
+          : (availability.get(String(r.id)) ?? NO_AVAILABILITY),
+        ended
+      };
+    })
+    // Campaigns a customer cannot act on sink below the ones they can, and
+    // finished ones sink below those again. Array#sort is stable, so date order
+    // is preserved within each group.
     .sort(
-      (a, b) => Number(b.availability.bookable) - Number(a.availability.bookable)
+      (a, b) =>
+        Number(a.ended) - Number(b.ended) ||
+        Number(b.availability.bookable) - Number(a.availability.bookable)
     );
 }
 

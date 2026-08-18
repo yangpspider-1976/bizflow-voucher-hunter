@@ -1733,7 +1733,7 @@ export function manilaDateString(date = new Date()) {
   }).format(date);
 }
 
-function addCalendarDays(date: string, days: number) {
+export function addCalendarDays(date: string, days: number) {
   const value = new Date(`${date}T00:00:00.000Z`);
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);

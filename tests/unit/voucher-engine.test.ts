@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { all, getDb, mapCampaign, mapPool, one, resetDb, run } from "@/server/db";
+import {
+  addCalendarDays,
+  all,
+  getDb,
+  manilaDateString,
+  mapCampaign,
+  mapPool,
+  one,
+  resetDb,
+  run,
+} from "@/server/db";
 import { AppError } from "@/server/errors";
 import {
   generateCandidate,
@@ -214,8 +224,10 @@ describe("voucher engine (hunt-first flow)", () => {
 
 // A campaign that cannot be hunted right now is not the same as one that is
 // over: slot capacity returns when a booking is cancelled, so a full campaign
-// stays listed (its page still serves anyone holding an unbooked voucher)
-// while a finished one leaves the directory for good.
+// stays listed and its page still serves anyone holding an unbooked voucher.
+// A finished one is listed too, for a while — flagged `ended` and sorted last,
+// so the app can show it closed instead of silently dropping it — and only
+// leaves the directory once it is well past.
 describe("public campaign directory", () => {
   const SOLD_OUT_JULY_DINNER = `UPDATE slots SET remaining_capacity = 0, status = 'sold_out'
      WHERE campaign_id = (SELECT id FROM campaigns WHERE slug = 'july-dinner')`;
@@ -236,14 +248,55 @@ describe("public campaign directory", () => {
     expect(cards.every((card) => card.availability.bookable)).toBe(true);
   });
 
-  it("drops a campaign whose end date has passed", async () => {
+  async function endJulyDinner(daysAgo: number) {
     const db = await getDb();
     await run(db, "UPDATE campaigns SET end_date = ? WHERE slug = ?", [
-      "2026-07-02",
+      addCalendarDays(manilaDateString(), -daysAgo),
+      "july-dinner",
+    ]);
+  }
+
+  it("keeps a campaign whose end date has passed, ended and sorted last", async () => {
+    await endJulyDinner(1);
+
+    const cards = await listPublicCampaignCards();
+    const card = cards.find((entry) => entry.campaign.slug === "july-dinner");
+    expect(card?.ended).toBe(true);
+    // Whatever stock and capacity survive the end date, the hunt is over.
+    expect(card?.availability).toMatchObject({ bookable: false });
+    expect(cards.at(-1)?.campaign.slug).toBe("july-dinner");
+    expect(cards.some((entry) => !entry.ended)).toBe(true);
+  });
+
+  it("drops a campaign that ended long ago", async () => {
+    await endJulyDinner(31);
+
+    expect(await cardFor("july-dinner")).toBeUndefined();
+  });
+
+  it("lists a closed campaign as ended even inside its dates", async () => {
+    const db = await getDb();
+    await run(db, "UPDATE campaigns SET status = 'closed' WHERE slug = ?", [
+      "july-dinner",
+    ]);
+
+    expect(await cardFor("july-dinner")).toMatchObject({ ended: true });
+  });
+
+  // Pausing is a business hiding a campaign it means to bring back, which is
+  // not the same claim as telling customers it is over.
+  it("keeps a paused campaign out of the directory entirely", async () => {
+    const db = await getDb();
+    await run(db, "UPDATE campaigns SET status = 'paused' WHERE slug = ?", [
       "july-dinner",
     ]);
 
     expect(await cardFor("july-dinner")).toBeUndefined();
+  });
+
+  it("marks every running campaign as not ended", async () => {
+    const cards = await listPublicCampaignCards();
+    expect(cards.every((card) => !card.ended)).toBe(true);
   });
 
   it("keeps a full campaign listed, unbookable, and sorted below the rest", async () => {

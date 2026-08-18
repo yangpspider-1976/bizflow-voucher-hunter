@@ -81,6 +81,13 @@ export type CampaignCard = {
   businessAddress?: string;
   businessContactNumber?: string;
   availability: CampaignAvailability;
+  /**
+   * The campaign is over: closed by the business, or past its end date. Unlike
+   * `availability`, this never flips back — a finished campaign keeps its place
+   * in the directory for a short while, marked as such and no longer openable,
+   * rather than vanishing on the customer who was hunting it.
+   */
+  ended: boolean;
 };
 
 /**

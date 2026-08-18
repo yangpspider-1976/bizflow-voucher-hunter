@@ -195,14 +195,20 @@ export default function HomeScreen() {
               businessIndustry,
               businessName,
               campaign,
+              ended,
             }) => {
               const chip = MODE_CHIPS[businessIndustry] ?? MODE_CHIPS.other;
               // A full campaign stays tappable: its page still carries the
               // venue, the terms, and the booking step for anyone already
               // holding a voucher from it. Only the call to action changes.
+              // A finished one has nothing left to serve — the campaign
+              // endpoints 404 on it — so its card is disabled outright.
               const bookable = availability.bookable;
               return (
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: ended }}
+                  disabled={ended}
                   key={campaign.id}
                   onPress={() =>
                     router.push({
@@ -213,7 +219,8 @@ export default function HomeScreen() {
                   style={({ pressed }) => [
                     styles.card,
                     !bookable && styles.cardUnavailable,
-                    pressed && styles.cardPressed,
+                    ended && styles.cardEnded,
+                    pressed && !ended && styles.cardPressed,
                   ]}
                 >
                   <CampaignImage
@@ -268,7 +275,9 @@ export default function HomeScreen() {
                     ) : (
                       <View style={styles.cardStatus}>
                         <Text style={styles.cardStatusText}>
-                          {availabilityLabel(t, availability)}
+                          {ended
+                            ? t("availability.ended")
+                            : availabilityLabel(t, availability)}
                         </Text>
                       </View>
                     )}
@@ -380,6 +389,12 @@ const styles = StyleSheet.create({
   // it just cannot be hunted right now.
   cardUnavailable: {
     opacity: 0.62,
+  },
+  // A finished campaign is not a link at all, so it reads as inert: flatter
+  // than the surface around it, and dimmer than a merely full card.
+  cardEnded: {
+    backgroundColor: colors.page,
+    opacity: 0.55,
   },
   cardTop: {
     // Without this the chip stretches to the row's full height and its pill

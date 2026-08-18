@@ -256,6 +256,7 @@ const en = {
   "availability.fullyBooked": "Fully booked",
   "availability.allClaimed": "All vouchers claimed",
   "availability.unavailable": "Currently unavailable",
+  "availability.ended": "No longer available",
   "availability.fullyBookedNotice":
     "Every time slot for this campaign is taken. Slots free up when a booking is cancelled, so it is worth checking back.",
   "availability.allClaimedNotice":
@@ -623,6 +624,7 @@ const ko: Catalogue = {
   "availability.fullyBooked": "예약 마감",
   "availability.allClaimed": "쿠폰 소진",
   "availability.unavailable": "현재 이용 불가",
+  "availability.ended": "종료된 캠페인",
   "availability.fullyBookedNotice":
     "이 캠페인의 모든 시간대가 예약되었습니다. 예약이 취소되면 자리가 생길 수 있으니 나중에 다시 확인해 주세요.",
   "availability.allClaimedNotice": "이 캠페인의 쿠폰이 모두 소진되었습니다.",
@@ -982,6 +984,7 @@ const zh: Catalogue = {
   "availability.fullyBooked": "已约满",
   "availability.allClaimed": "优惠券已领完",
   "availability.unavailable": "暂不可用",
+  "availability.ended": "活动已结束",
   "availability.fullyBookedNotice":
     "该活动的所有时段均已约满。有人取消预约时会释放名额，请稍后再来查看。",
   "availability.allClaimedNotice": "该活动的优惠券已全部领完。",
@@ -1344,6 +1347,7 @@ const ja: Catalogue = {
   "availability.fullyBooked": "満席",
   "availability.allClaimed": "クーポン終了",
   "availability.unavailable": "現在利用できません",
+  "availability.ended": "終了しました",
   "availability.fullyBookedNotice":
     "このキャンペーンの時間帯はすべて予約済みです。キャンセルが出ると空くことがあるため、後ほどご確認ください。",
   "availability.allClaimedNotice":
