@@ -1277,11 +1277,18 @@ async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
     mapAttempt
   );
   const voucherRow = await one(db, "SELECT * FROM vouchers WHERE campaign_id = ? AND user_id = ?", [campaign.id, user.id]);
+  const voucher = voucherRow ? mapVoucher(voucherRow) : undefined;
+  // Sent alongside the voucher so a client resuming the campaign can show the
+  // booking it made. Reading it back out of the campaign's slot list is one
+  // lookup that can miss — and a customer who cannot see the reservation they
+  // already hold has, as far as they can tell, lost it.
+  const bookedSlotRow = voucher ? await one(db, "SELECT * FROM slots WHERE id = ?", [voucher.slotId]) : null;
   return {
     user,
     campaign,
     attempts,
-    voucher: voucherRow ? mapVoucher(voucherRow) : undefined,
+    voucher,
+    voucherSlot: bookedSlotRow ? mapSlot(bookedSlotRow) : undefined,
     remainingBaseAttempts: Math.max(0, campaign.baseAttempts - attempts.filter((a) => a.sourceType === "base").length),
     remainingBonusAttempts: await remainingBonusAttempts(db, campaign, user.id),
     sharesGrantedToday: await countGrantedRewardsToday(db, campaign.id, user.id)

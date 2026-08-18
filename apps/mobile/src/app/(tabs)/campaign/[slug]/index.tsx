@@ -1,4 +1,9 @@
-import { buildDirectionsUrl, buildTelUrl, isCoordinate } from "@bizflow/shared";
+import {
+  buildDirectionsUrl,
+  buildTelUrl,
+  isCoordinate,
+  isSelectableAttempt,
+} from "@bizflow/shared";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -22,6 +27,7 @@ import { Icon, type IconName } from "@/components/Icon";
 import { ErrorState } from "@/components/ErrorState";
 import { StepHeader } from "@/components/HuntUi";
 import { useHunt } from "@/hunt/HuntContext";
+import { resumeStep, type HuntStep } from "@/hunt/progress";
 import {
   availabilityLabel,
   availabilityNotice,
@@ -61,6 +67,18 @@ function buildEmbeddedMapsHtml(latitude: number, longitude: number) {
   </body>
 </html>`;
 }
+
+/**
+ * Where each resumable step lives. The landing itself is not one: it is where a
+ * resume is offered, never a place to be returned to.
+ */
+const STEP_ROUTES = {
+  roulette: "/campaign/[slug]/roulette",
+  results: "/campaign/[slug]/results",
+  datetime: "/campaign/[slug]/datetime",
+  confirm: "/campaign/[slug]/confirm",
+  confirmation: "/campaign/[slug]/confirmation",
+} as const satisfies Record<HuntStep, string>;
 
 /** Step 1 — the campaign landing (`.campaign-landing-card` on the web). */
 export default function CampaignLandingScreen() {
@@ -161,25 +179,32 @@ export default function CampaignLandingScreen() {
     }, [loading, refreshSnapshot]),
   );
 
-  const hasActiveAttempt = flow.attempts.some(
-    (attempt) => attempt.status === "Candidate" || attempt.status === "Held",
-  );
+  const hasActiveAttempt = flow.attempts.some(isSelectableAttempt);
   const canResume = Boolean(
     flow.issued || flow.selectedSlotId || hasActiveAttempt,
   );
 
+  const goToStep = useCallback(
+    (step: HuntStep) => {
+      router.push({ pathname: STEP_ROUTES[step], params: { slug } });
+    },
+    [router, slug],
+  );
+
   async function startHunt() {
-    // Keep this order aligned with the web landing page's resumeRoute().
-    if (flow.issued) {
-      router.push({ pathname: "/campaign/[slug]/confirmation", params: { slug } });
-      return;
-    }
-    if (flow.selectedSlotId) {
-      router.push({ pathname: "/campaign/[slug]/confirm", params: { slug } });
-      return;
-    }
-    if (hasActiveAttempt) {
-      router.push({ pathname: "/campaign/[slug]/results", params: { slug } });
+    // One rule behind both labels this button carries: "Continue" returns to
+    // the furthest step this phone reached, and "Let's Hunt!" falls out of the
+    // same rule, because a hunt holding nothing can only go to the reel.
+    if (canResume) {
+      goToStep(
+        resumeStep({
+          attempts: flow.attempts,
+          hasVoucher: Boolean(flow.issued),
+          selectedAttemptId: flow.selectedAttemptId,
+          selectedSlotId: flow.selectedSlotId,
+          step: flow.step,
+        }),
+      );
       return;
     }
     setBusy(true);
@@ -192,22 +217,15 @@ export default function CampaignLandingScreen() {
       if (!started) {
         throw new Error(t("campaign.sessionNotReady"));
       }
-      if (started.voucher) {
-        router.push({
-          pathname: "/campaign/[slug]/confirmation",
-          params: { slug },
-        });
-        return;
-      }
-      const activeAttempt = started.attempts.find(
-        (attempt) =>
-          attempt.status === "Candidate" || attempt.status === "Held",
+      goToStep(
+        resumeStep({
+          attempts: started.attempts,
+          hasVoucher: Boolean(started.voucher),
+          selectedAttemptId: flow.selectedAttemptId,
+          selectedSlotId: flow.selectedSlotId,
+          step: flow.step,
+        }),
       );
-      if (activeAttempt) {
-        router.push({ pathname: "/campaign/[slug]/results", params: { slug } });
-        return;
-      }
-      router.push({ pathname: "/campaign/[slug]/roulette", params: { slug } });
     } catch (caught) {
       setActionError(
         caught instanceof Error ? caught.message : t("campaign.startError"),

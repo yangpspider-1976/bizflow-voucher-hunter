@@ -71,6 +71,13 @@ customer booked ends. There is no issuance-relative expiry window.
 
 The roulette opens straight from the campaign landing CTA.
 
+**A hunt is resumed, never restarted.** The landing's CTA returns to the furthest
+step this phone reached — an issued voucher shows its confirmation, a half-made
+booking its picker, and a spin that was interrupted goes back to the reel and
+reveals the draw it already paid for rather than buying another. The server owns
+what was drawn and issued (`GET /hunt/state`, which carries the booked slot with
+the voucher); the step itself is the app's, in `apps/mobile/src/hunt/progress.ts`.
+
 Outside the hunt the app carries three more tabs: **Vouchers** (issued vouchers
 and their redemption QR), **Shop** (spend LP with participating partners), and
 **More** (account, Loyalty Points wallet, language, sign out).

@@ -1,5 +1,5 @@
 import type { VoucherAttempt } from "@bizflow/shared";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -15,8 +15,9 @@ import { Button, InlineError } from "@/components/FormControls";
 import { HuntHeading, StepHeader } from "@/components/HuntUi";
 import { getDevPoolId } from "@/dev/devTools";
 import { useHunt } from "@/hunt/HuntContext";
+import { attemptToReveal } from "@/hunt/progress";
 import { RouletteReel, type RouletteReelHandle } from "@/hunt/RouletteReel";
-import { subscribeToHuntReset } from "@/hunt/resetSignal";
+import { subscribeToHuntResetStarting } from "@/hunt/resetSignal";
 import {
   placeholderRouletteItems,
   rouletteLoop,
@@ -42,6 +43,10 @@ export default function RouletteScreen() {
   const t = useTranslation();
   const router = useRouter();
   const { token } = useAuth();
+  // Set by "Spin again", the one entry that must always cost a new attempt.
+  // Every other way in is a resume, and a resume reveals what is already held.
+  const { spin: spinIntent } = useLocalSearchParams<{ spin?: string }>();
+  const freshSpin = spinIntent === "fresh";
   const {
     addAttempt,
     flow,
@@ -50,7 +55,6 @@ export default function RouletteScreen() {
     sessionId,
     slug,
   } = useHunt();
-  const issued = flow.issued;
   const reel = useRef<RouletteReelHandle>(null);
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -73,6 +77,13 @@ export default function RouletteScreen() {
   // Guards a double-tap from starting two competing stop animations.
   const stopRunning = useRef(false);
   const started = useRef(false);
+  // The reel makes its decision once, when it opens. Reading the flow through a
+  // ref is what keeps that decision from re-running: with the attempts array in
+  // the effect's dependencies, any snapshot refresh — including the one the
+  // recovery below performs — tore down the very run that was awaiting it, so a
+  // resumed reel could sit spinning forever with nothing left to land it.
+  const flowRef = useRef(flow);
+  flowRef.current = flow;
   const drawAbort = useRef<AbortController | null>(null);
   // Invalidates draw/landing work that began before a development reset.
   const generation = useRef(0);
@@ -103,7 +114,7 @@ export default function RouletteScreen() {
 
   useEffect(
     () =>
-      subscribeToHuntReset(() => {
+      subscribeToHuntResetStarting(() => {
         generation.current += 1;
         drawAbort.current?.abort();
         drawAbort.current = null;
@@ -125,15 +136,57 @@ export default function RouletteScreen() {
     // Wait for the snapshot before drawing. Deciding while it is still in flight
     // would read `issued` as absent and spend a spin the server then refuses.
     if (loading || started.current || !token || !sessionId) return;
+    const opened = flowRef.current;
     // Already holding this campaign's one final voucher: drawing again would only
     // come back as E-DUPLICATE-FINAL, so show the voucher rather than a dead reel.
-    if (issued) {
+    if (opened.issued) {
       started.current = true;
       router.replace({ pathname: "/campaign/[slug]/confirmation", params: { slug } });
       return;
     }
     started.current = true;
     let active = true;
+
+    /**
+     * A draw that was made but never landed: the customer left the reel mid
+     * spin, and the attempt has been sitting on the server ever since. It is
+     * theirs and it has already been paid for, so reopening the campaign
+     * reveals it instead of buying another.
+     *
+     * Skipped for "Spin again", which is a request for a new draw and would
+     * otherwise re-show the prize they just declined to book.
+     */
+    const revealPending = freshSpin
+      ? undefined
+      : attemptToReveal(opened.attempts);
+
+    /**
+     * Puts a decided attempt on the reel. The spin is never what picks the
+     * voucher — it only has to land on it — so a resumed attempt and a freshly
+     * drawn one are handed over identically.
+     */
+    function landOn(attempt: VoucherAttempt, previews: RoulettePreview[]) {
+      const drawWinner: RoulettePreview = {
+        benefitType: attempt.benefitType,
+        benefitValue: attempt.benefitValue,
+        displayLabel: attempt.displayLabel,
+        rarity: attempt.rarity,
+        poolId: attempt.poolId,
+      };
+      const sequence = rouletteSequence(previews, drawWinner);
+      setItems(sequence.items);
+
+      const draw = { attempt, winner: drawWinner, items: sequence.items };
+      // The draw is settled, but the reel keeps free-spinning and the copy stays
+      // put — it only slows down when the visitor taps. If they already tapped
+      // while the request was in flight, honour that now.
+      if (stopRequested.current) {
+        stopRequested.current = false;
+        void runStop(draw);
+        return;
+      }
+      pendingStop.current = draw;
+    }
 
     async function spin() {
       const controller = new AbortController();
@@ -142,15 +195,22 @@ export default function RouletteScreen() {
       setPhase("searching");
       setError("");
       reel.current?.startSpin();
+      // Public pool previews fill the reel with the campaign's real vouchers.
+      // A failure here is not fatal: the placeholders keep it spinning.
+      let previews: RoulettePreview[] = [];
 
       try {
-        // Public pool previews fill the reel with the campaign's real vouchers.
-        // A failure here is not fatal: the placeholders keep it spinning.
-        const previews = await getCampaignPools(slug, token!).catch(
+        previews = await getCampaignPools(slug, token!).catch(
           () => [] as RoulettePreview[],
         );
         if (active && previews.length > 0) {
           setItems(rouletteLoop(previews));
+        }
+
+        if (revealPending) {
+          if (!active) return;
+          landOn(revealPending, previews);
+          return;
         }
 
         // Dev-only override chosen in the More tab's dev panel. Resolves to "" in
@@ -161,7 +221,7 @@ export default function RouletteScreen() {
             campaignSlug: slug,
             sessionId,
             sourceType:
-              flow.attempts.length > 0 && flow.bonusAttempts > 0
+              opened.attempts.length > 0 && opened.bonusAttempts > 0
                 ? "referral_bonus"
                 : "base",
             ...(devPoolId ? { devPoolId } : {}),
@@ -170,37 +230,14 @@ export default function RouletteScreen() {
           controller.signal,
         );
         if (!active) return;
-
-        const drawWinner: RoulettePreview = {
-          benefitType: attempt.benefitType,
-          benefitValue: attempt.benefitValue,
-          displayLabel: attempt.displayLabel,
-          rarity: attempt.rarity,
-          poolId: attempt.poolId,
-        };
-        const sequence = rouletteSequence(previews, drawWinner);
-        setItems(sequence.items);
-
-        const draw = { attempt, winner: drawWinner, items: sequence.items };
-        // The draw is settled, but the reel keeps free-spinning and the copy stays
-        // put — it only slows down when the visitor taps. If they already tapped
-        // while the request was in flight, honour that now.
-        if (stopRequested.current) {
-          stopRequested.current = false;
-          void runStop(draw);
-          return;
-        }
-        pendingStop.current = draw;
+        landOn(attempt, previews);
       } catch (caught) {
         if (!active || controller.signal.aborted) return;
-        reel.current?.reset();
-        setPhase("idle");
-        // A tap that was waiting on this draw has nothing left to stop.
-        stopRequested.current = false;
         // A campaign switch can finish hydrating between opening this screen and
-        // the draw request. If the server reports that its base spin was already
-        // used, resume the campaign's authoritative attempt rather than showing
-        // a dead roulette.
+        // the draw request — and so can a kill between a draw being committed
+        // and its response arriving. If the server reports that this spin was
+        // already spent, resume the campaign's authoritative attempt rather than
+        // showing a dead roulette over a draw that in fact succeeded.
         if (caught instanceof ApiError && caught.code === "E-ATTEMPT-LIMIT") {
           try {
             const snapshot = await refreshSnapshot();
@@ -212,21 +249,29 @@ export default function RouletteScreen() {
               });
               return;
             }
-            const activeAttempt = snapshot?.attempts.some(
-              (attempt) =>
-                attempt.status === "Candidate" || attempt.status === "Held",
-            );
-            if (activeAttempt) {
-              router.replace({
-                pathname: "/campaign/[slug]/results",
-                params: { slug },
-              });
+            const held = attemptToReveal(snapshot?.attempts ?? []);
+            if (held) {
+              // A spin the customer asked for and cannot have is an error worth
+              // saying out loud; one they were already owed is just their reel
+              // catching up with the server.
+              if (freshSpin) {
+                router.replace({
+                  pathname: "/campaign/[slug]/results",
+                  params: { slug },
+                });
+                return;
+              }
+              landOn(held, previews);
               return;
             }
           } catch {
             // Preserve the original draw error if the recovery refresh fails.
           }
         }
+        reel.current?.reset();
+        setPhase("idle");
+        // A tap that was waiting on this draw has nothing left to stop.
+        stopRequested.current = false;
         setError(
           caught instanceof Error ? caught.message : t("roulette.revealError"),
         );
@@ -242,9 +287,7 @@ export default function RouletteScreen() {
       drawAbort.current = null;
     };
   }, [
-    flow.attempts.length,
-    flow.bonusAttempts,
-    issued,
+    freshSpin,
     loading,
     router,
     refreshSnapshot,

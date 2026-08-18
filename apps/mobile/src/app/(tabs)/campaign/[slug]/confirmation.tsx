@@ -1,5 +1,12 @@
 import { useRouter } from "expo-router";
-import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -17,8 +24,20 @@ import { colors, fonts, palette, radius, spacing } from "@/theme";
 export default function ConfirmationScreen() {
   const { language, t } = useLanguage();
   const router = useRouter();
-  const { campaign, flow } = useHunt();
+  const { campaign, flow, loading } = useHunt();
   const issued = flow.issued;
+
+  // A campaign resumed straight to this screen renders before its snapshot has
+  // arrived. Saying "no voucher" in that gap tells a customer who holds one
+  // that it is gone, so the wait is shown as a wait.
+  if (loading) {
+    return (
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+        <StepHeader title={t("confirmation.stepTitle")} />
+        <ActivityIndicator color={colors.primary} style={styles.loader} />
+      </SafeAreaView>
+    );
+  }
 
   if (!issued) {
     return (
@@ -99,6 +118,9 @@ const styles = StyleSheet.create({
     padding: 18,
     paddingBottom: 48,
     paddingTop: 26,
+  },
+  loader: {
+    marginTop: 80,
   },
   check: {
     alignSelf: "center",

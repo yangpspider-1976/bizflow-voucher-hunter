@@ -70,7 +70,12 @@ export default function ResultsScreen() {
   async function handleShareOrSpin() {
     setShareError("");
     if (flow.bonusAttempts > 0) {
-      router.push({ pathname: "/campaign/[slug]/roulette", params: { slug } });
+      // Flagged as a fresh spin: opening the reel any other way resumes a draw
+      // that was never revealed, and this is a request for a new one.
+      router.push({
+        pathname: "/campaign/[slug]/roulette",
+        params: { slug, spin: "fresh" },
+      });
       return;
     }
     if (!flow.userId) {

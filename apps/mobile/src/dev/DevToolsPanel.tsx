@@ -20,7 +20,11 @@ import {
   simulatePurchase,
   type DevPoolOption,
 } from "@/dev/devTools";
-import { publishHuntReset } from "@/hunt/resetSignal";
+import { clearHuntProgress } from "@/hunt/progressStore";
+import {
+  publishHuntResetCompleted,
+  publishHuntResetStarting,
+} from "@/hunt/resetSignal";
 import { colors, fonts, radius, spacing } from "@/theme";
 
 /**
@@ -133,8 +137,18 @@ export function DevToolsPanel() {
     try {
       // Cancel any roulette request kept mounted behind the More tab before the
       // server deletes its attempt. Otherwise that request can recreate it.
-      publishHuntReset();
+      publishHuntResetStarting();
       const result = await resetHunt(token);
+      // Only now is the server's state actually gone, so only now may the rest
+      // of the app drop its own. Announcing it before the request meant a reset
+      // that failed left every campaign screen believing a hunt had been
+      // cleared that the server still held.
+      publishHuntResetCompleted();
+      // The rows those resume points pointed at are gone; left behind, they
+      // would send the next visit to a booking screen for a deleted attempt.
+      // Cleared here rather than only in the campaign provider, because a reset
+      // covers every campaign and at most one of them has a stack mounted.
+      await clearHuntProgress();
       // Forcing a pool only makes sense for a hunt that has not been spent.
       await clearDevPoolIds();
       setPoolId("");

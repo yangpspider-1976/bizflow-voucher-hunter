@@ -232,6 +232,12 @@ export type HuntState = {
   attempts: VoucherAttempt[];
   /** Present once this phone has issued a final voucher for the campaign. */
   voucher?: Voucher;
+  /**
+   * The slot that voucher was booked at, carried with it so a resumed campaign
+   * can show the booking without depending on the campaign's slot list still
+   * holding that row.
+   */
+  voucherSlot?: CampaignSlot;
   remainingBaseAttempts: number;
   remainingBonusAttempts: number;
   sharesGrantedToday: number;

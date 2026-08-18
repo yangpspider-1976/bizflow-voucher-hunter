@@ -25,7 +25,16 @@ export default function ConfirmScreen() {
   const { language, t } = useLanguage();
   const router = useRouter();
   const { phone, token } = useAuth();
-  const { campaign, flow, save, selectedAttempt, sessionId, slotById, slug } = useHunt();
+  const {
+    campaign,
+    flow,
+    save,
+    selectedAttempt,
+    sessionId,
+    settleVoucher,
+    slotById,
+    slug,
+  } = useHunt();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,7 +58,9 @@ export default function ConfirmScreen() {
         },
         token,
       );
-      save({ issued: { voucher: issued.voucher, slot: issued.slot } });
+      // Not `save`: the booking has to survive a snapshot read that has not
+      // caught up with it yet, and only this records that it is ours.
+      settleVoucher({ voucher: issued.voucher, slot: issued.slot });
       router.replace({ pathname: "/campaign/[slug]/confirmation", params: { slug } });
     } catch (caught) {
       setError(
