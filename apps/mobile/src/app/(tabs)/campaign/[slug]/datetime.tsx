@@ -8,6 +8,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, InlineError } from "@/components/FormControls";
 import { InfoCard, SelectedStrip, SlotRow, StepHeader } from "@/components/HuntUi";
 import { useHunt } from "@/hunt/HuntContext";
+import { recoverSelection } from "@/hunt/recoverSelection";
 import {
   formatDate,
   formatTime,
@@ -29,6 +30,10 @@ export default function DateTimeScreen() {
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Kept apart from `error` because the two need opposite affordances: `error`
+  // is retryable and keeps the picker usable, while this one means the server
+  // has no candidate left to book and the only way out is a new hunt.
+  const [expired, setExpired] = useState(false);
 
   const load = useCallback(async () => {
     if (!token || !flow.selectedAttemptId) {
@@ -37,6 +42,7 @@ export default function DateTimeScreen() {
     }
     setLoading(true);
     setError("");
+    setExpired(false);
     try {
       const result = await getAttemptSlots(
         { campaignSlug: slug, attemptId: flow.selectedAttemptId },
@@ -53,19 +59,18 @@ export default function DateTimeScreen() {
         // valid server attempt after a reset/reload or campaign switch.
         try {
           const snapshot = await begin();
-          const recoveredAttempt =
-            snapshot?.attempts.find(
-              (attempt) => attempt.id === flow.selectedAttemptId,
-            ) ??
-            snapshot?.attempts
-              .slice()
-              .reverse()
-              .find(
-                (attempt) =>
-                  attempt.status === "Candidate" || attempt.status === "Held",
-              );
+          const recovery = recoverSelection({
+            selectedAttemptId: flow.selectedAttemptId,
+            snapshot,
+          });
 
-          if (snapshot?.voucher) {
+          if (recovery.kind === "retry") {
+            setSlots([]);
+            setError(t("datetime.loadError"));
+            return;
+          }
+
+          if (recovery.kind === "voucher") {
             router.replace({
               pathname: "/campaign/[slug]/confirmation",
               params: { slug },
@@ -73,28 +78,39 @@ export default function DateTimeScreen() {
             return;
           }
 
-          if (recoveredAttempt) {
+          if (recovery.kind === "attempt") {
             save({
               attempts: snapshot?.attempts ?? [],
-              selectedAttemptId: recoveredAttempt.id,
+              selectedAttemptId: recovery.attempt.id,
               selectedSlotId: "",
               selectedDate: "",
             });
             const recovered = await getAttemptSlots(
-              { campaignSlug: slug, attemptId: recoveredAttempt.id },
+              { campaignSlug: slug, attemptId: recovery.attempt.id },
               token,
             );
             setSlots(recovered.slots);
             return;
           }
-        } catch {
-          // With no recoverable authoritative attempt, restart at the reel.
+        } catch (recoveryFailure) {
+          // Reconciliation itself failed, so nothing here is authoritative about
+          // the selection — the network or the campaign read is what broke. Stay
+          // retryable rather than sending the customer back to the reel on a
+          // guess that would silently cost them their candidate.
+          setSlots([]);
+          setError(
+            recoveryFailure instanceof Error
+              ? recoveryFailure.message
+              : t("datetime.loadError"),
+          );
+          return;
         }
 
+        // The server answered and holds no bookable candidate for this campaign,
+        // so the selection really is gone. This is the only branch that earns
+        // the expired state.
         setSlots([]);
-        setError(
-          t("datetime.selectionExpired"),
-        );
+        setExpired(true);
         return;
       }
       setSlots([]);
@@ -154,12 +170,25 @@ export default function DateTimeScreen() {
 
         {loading ? (
           <ActivityIndicator color={colors.primary} style={styles.loader} />
-        ) : error ? null : slots.length === 0 ? (
+        ) : expired ? (
           <InfoCard>
-            <Text style={styles.infoText}>
-              {t("datetime.noSlotsForVoucher")}
-            </Text>
+            <Text style={styles.infoText}>{t("datetime.selectionExpired")}</Text>
+            <Button
+              onPress={() =>
+                router.replace({ pathname: "/campaign/[slug]", params: { slug } })
+              }
+            >
+              {t("results.returnCampaign")}
+            </Button>
           </InfoCard>
+        ) : slots.length === 0 ? (
+          error ? null : (
+            <InfoCard>
+              <Text style={styles.infoText}>
+                {t("datetime.noSlotsForVoucher")}
+              </Text>
+            </InfoCard>
+          )
         ) : (
           dates.map((date) => (
             <View key={date}>
@@ -203,18 +232,27 @@ export default function DateTimeScreen() {
           ))
         )}
 
-        {error ? <InlineError message={error} /> : null}
+        {error ? (
+          <View style={styles.errorBlock}>
+            <InlineError message={error} />
+            <Button onPress={() => void load()}>{t("common.retry")}</Button>
+          </View>
+        ) : null}
 
-        <View style={styles.action}>
-          <Button
-            disabled={!flow.selectedSlotId}
-            onPress={() =>
-              router.push({ pathname: "/campaign/[slug]/confirm", params: { slug } })
-            }
-          >
-            {t("common.continue")}
-          </Button>
-        </View>
+        {/* Hidden while expired: the InfoCard above owns the way out, and a
+            permanently disabled Continue reads as the screen being broken. */}
+        {expired ? null : (
+          <View style={styles.action}>
+            <Button
+              disabled={!flow.selectedSlotId}
+              onPress={() =>
+                router.push({ pathname: "/campaign/[slug]/confirm", params: { slug } })
+              }
+            >
+              {t("common.continue")}
+            </Button>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -266,5 +304,11 @@ const styles = StyleSheet.create({
   },
   action: {
     marginTop: spacing.xl,
+  },
+  // Keeps the retry button with the message that explains it, rather than
+  // letting it drift down next to Continue.
+  errorBlock: {
+    gap: spacing.md,
+    marginTop: spacing.md,
   },
 });
