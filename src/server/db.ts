@@ -1116,6 +1116,29 @@ export async function getDb(): Promise<Client> {
   return rawClient();
 }
 
+/**
+ * Runs a callback inside a read transaction: one consistent snapshot, no write
+ * lock, nothing committed.
+ *
+ * `withTx` would give the same consistent view, but it takes the primary's
+ * write lock. Putting that on a path as hot as the hunt snapshot took
+ * production down on 2026-08-18: concurrent `/hunt/state` requests serialized
+ * on the lock and every one failed after ~2s. A read transaction contends with
+ * nothing, which is what a read should do.
+ *
+ * `close()` releases the snapshot, rolls back if nothing was committed, and is
+ * idempotent — so it is safe in `finally` whether the body threw or not.
+ */
+export async function withReadTx<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  await ensureReady();
+  const tx = await rawClient().transaction("read");
+  try {
+    return await fn(tx);
+  } finally {
+    tx.close();
+  }
+}
+
 /** Runs a callback inside a write transaction, committing on success and rolling back on error. */
 export async function withTx<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
   await ensureReady();
