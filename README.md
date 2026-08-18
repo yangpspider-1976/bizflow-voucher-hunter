@@ -295,7 +295,7 @@ Before production:
 - Provision a Turso database and set `DATABASE_URL` / `DATABASE_AUTH_TOKEN` (the data layer is already serverless-ready via `@libsql/client`).
 - Set `ADMIN_SESSION_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_ACCESS_TOKEN`. Production has no bootstrap fallback — the login route returns `E-ADMIN-CONFIG` without them.
 - Set `TRUSTED_PROXY_HOPS` to the real proxy depth and leave `ENABLE_DEV_TOOLS` unset.
-- Configure a real SMS provider. Use `SMS_PROVIDER=smpp_worker` for the hosted SMPP path, since binding directly from Vercel never works (see `.env.example`).
+- Configure a real SMS provider. Use `SMS_PROVIDER=smpp_worker` for the hosted SMPP path, since binding directly from Vercel never works (see `.env.example`). Standing up that host is `docs/deployment/smpp-worker.md`.
 - Work through the deployment checklist in `docs/SECURITY.md`.
 - Set the app's `API_BASE_URL` to the production HTTPS domain, then build and ship the AAB — see `docs/PLAY_RELEASE.md` and `docs/PLAY_CONSOLE_ANSWERS.md`.
 - Unset `REVIEW_ACCOUNT_PHONE` / `REVIEW_ACCOUNT_OTP` once the app is live; they are a long-lived fixed-code sign-in for Play reviewers.

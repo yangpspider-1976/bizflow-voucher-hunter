@@ -1,0 +1,28 @@
+# TLS terminator in front of the SMPP worker.
+#
+# Install to /etc/caddy/Caddyfile. Caddy obtains and renews a Let's Encrypt
+# certificate automatically, which is why this is three lines instead of certbot
+# plus a cron job.
+#
+# Why TLS at all: the app authenticates to the worker with a bearer token
+# (SMPP_WORKER_API_TOKEN) on every send. Over plain HTTP that token is on the
+# wire in cleartext, and anyone holding it can spend SMPP credit at your expense.
+#
+# Replace the hostname with your own. A free dynamic-DNS name works — the host's
+# IP is static, the name just needs to resolve to it for the ACME challenge.
+
+smpp.example.com {
+	# The worker binds 0.0.0.0:8080 and cannot be told otherwise, so the host
+	# firewall is what keeps port 8080 off the internet. Only this proxy should
+	# ever reach it.
+	reverse_proxy 127.0.0.1:8080
+
+	# GET /health is left reachable and unauthenticated. It returns only
+	# {"ok":true,"bound":<bool>}, which is worth far more pointed at an uptime
+	# monitor than it costs to disclose — a worker that has silently lost its
+	# bind is the failure mode you most want paged about.
+
+	log {
+		output file /var/log/caddy/smpp-worker.log
+	}
+}

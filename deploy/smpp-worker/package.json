@@ -1,0 +1,13 @@
+{
+  "name": "voucher-hunt-smpp-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone deploy unit for server/smpp-worker.cjs. The worker requires only node:http and smpp, so the host does not need the Next app or its dependency tree. Keep the smpp version in step with the root package.json by hand.",
+  "main": "smpp-worker.cjs",
+  "scripts": {
+    "start": "node smpp-worker.cjs"
+  },
+  "dependencies": {
+    "smpp": "^0.6.0-rc.4"
+  }
+}

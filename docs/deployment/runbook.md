@@ -29,5 +29,6 @@ Passwords must be at least 10 characters, matching the console's own rule.
 ## Production Notes
 - Provision PostgreSQL/Supabase before real traffic.
 - Replace local JSON datastore with transactional database repository.
-- Configure real SMS provider credentials.
+- Configure real SMS provider credentials. The SMPP path needs a dedicated host
+  holding the provider-whitelisted IP — see `smpp-worker.md` in this directory.
 - Set `NEXT_PUBLIC_APP_URL`, `ADMIN_ACCESS_TOKEN`, and SMS variables in hosting environment.

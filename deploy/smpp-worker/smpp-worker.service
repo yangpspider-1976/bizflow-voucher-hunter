@@ -1,0 +1,44 @@
+# Voucher Hunt SMPP worker.
+#
+# Install to /etc/systemd/system/smpp-worker.service. See
+# docs/deployment/smpp-worker.md for the full procedure.
+#
+# Restart=always is load-bearing: the SMSC drops the session on its own schedule
+# and the worker only rebinds lazily, on the next send. If the process itself
+# dies, nothing else brings SMS back.
+
+[Unit]
+Description=Voucher Hunt SMPP worker
+Documentation=https://github.com/your-org/bizflow-voucher-hunter/blob/main/docs/deployment/smpp-worker.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=smppworker
+Group=smppworker
+WorkingDirectory=/opt/smpp-worker
+
+# Credentials live here, not in this unit file: root-owned, chmod 600, and not
+# world-readable via `systemctl cat`.
+EnvironmentFile=/etc/smpp-worker.env
+
+ExecStart=/usr/bin/node /opt/smpp-worker/smpp-worker.cjs
+Restart=always
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smpp-worker
+
+# The worker reads config and opens sockets. It never writes to disk.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
