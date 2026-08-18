@@ -20,7 +20,6 @@ import {
   mapVoucher,
   one,
   run,
-  withReadTx,
   withTx
 } from "@/server/db";
 import { toDisplayPhone } from "@/lib/phone-display";
@@ -600,8 +599,8 @@ export async function startHunt(input: {
     await addAnalytics(tx, campaign.id, "hunt_started", { phone: user.phone }, user.id);
     return { campaign, user };
   });
-  // Read the snapshot back through a transaction, not `getDb()` — see huntUserIn.
-  return withReadTx((tx) => huntState(tx, result.campaign, result.user));
+  const db = await getDb();
+  return huntState(db, result.campaign, result.user);
 }
 
 /**
@@ -758,45 +757,38 @@ export function generateCandidate(input: {
  * Called after the user picks 1 of their candidates, before final confirmation.
  */
 /**
- * A customer's hunt rows are read inside a read transaction, never through `getDb()`.
+ * The hunt user for a campaign, read through a transaction.
  *
- * The transaction is not for atomicity. It is because plain reads are not
- * reliable against the deployed libSQL, measured in production on 2026-08-18:
+ * The transaction is not for atomicity — this is a single statement. It is
+ * because the plain read is not reliable against the deployed libSQL. Measured
+ * in production on 2026-08-18: `SELECT * FROM users WHERE campaign_id = ? AND
+ * phone = ?` returned no row through `getDb()` for every dashboard-created
+ * campaign (dog-mania, pet-pamper-palooza, and a fresh one made minutes
+ * earlier), while the identical statement with the same arguments returned the
+ * row every time from inside a transaction — `findOrCreateUser` found it on
+ * three consecutive calls. The three seeded campaigns were unaffected, and two
+ * different phone numbers behaved the same, so it tracks the campaign rather
+ * than the caller.
  *
- *  - `SELECT * FROM users WHERE campaign_id = ? AND phone = ?` returned no row
- *    through `getDb()` for every dashboard-created campaign, while the identical
- *    statement with the same arguments returned the row every time from inside a
- *    transaction. The three seeded campaigns were unaffected and two different
- *    phone numbers behaved the same, so it tracked the campaign, not the caller.
- *  - `attempts` then showed the same fault, and worse: two plain reads of that
- *    one table disagreed with each other in the same second. `huntState` listed
- *    an attempt that `listSlotsForAttempt` 404'd on, and found none of an
- *    attempt the write had just returned and that `listSlotsForAttempt` could
- *    read back perfectly.
+ * The rows were demonstrably present: `PRAGMA integrity_check` returned ok,
+ * there were no duplicate slugs, and `campaign_id`/`phone` matched byte for
+ * byte with no stray whitespace. The customer-visible effect was that anyone on
+ * a real campaign could draw a voucher and then never book it, because every
+ * read path to this row 404'd.
  *
- * The rows were demonstrably present — `PRAGMA integrity_check` ok, no duplicate
- * slugs, byte-exact `campaign_id` and `phone`.
+ * So the write path's view is the one to trust for identity. Only this lookup is
+ * routed that way; the rows it guards (attempts, slots) are still read plainly,
+ * since a stale read there degrades gracefully and this one does not.
  *
- * Both faults are customer-visible and neither degrades gracefully. A stale
- * `users` read means a voucher can be won and never booked. A stale `attempts`
- * read means a hunt reset appears not to work: the delete commits, the snapshot
- * still lists the deleted attempt, and the campaign offers to continue a hunt
- * that is gone. So every read backing that decision goes through the write
- * path's view, and `huntState` takes its whole snapshot from one transaction so
- * its parts cannot disagree with each other either.
- *
- * A *read* transaction, deliberately. The first attempt at this used `withTx`,
- * whose write lock on a path this hot took production down inside a minute —
- * concurrent requests queued on the lock and failed at ~2s each. A read
- * transaction gives the same consistent snapshot and contends with nothing.
- *
- * This treats a symptom — the cause is below the application and is still open
- * with Turso. Remove it once a plain read of these tables is trustworthy.
+ * This treats a symptom — the root cause is below the application and is still
+ * open with Turso. Remove it once a plain read of `users` is trustworthy.
  */
-async function huntUserIn(db: Exec, campaignId: string, phone: string): Promise<EndUser> {
+async function huntUserOrThrow(campaignId: string, phone: string): Promise<EndUser> {
   const normalized = normalizePhone(phone);
   const userRow = normalized
-    ? await one(db, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaignId, normalized])
+    ? await withTx((tx) =>
+        one(tx, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaignId, normalized])
+      )
     : undefined;
   if (!userRow) throw new AppError("E-USER-404", "No hunt session found for this phone number", 404);
   return mapUser(userRow);
@@ -805,31 +797,28 @@ async function huntUserIn(db: Exec, campaignId: string, phone: string): Promise<
 export async function listSlotsForAttempt(input: { campaignSlug: string; phone: string; attemptId: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  // One transaction for the identity, the attempt and its slots — see huntUserIn.
-  return withReadTx(async (tx) => {
-    const user = await huntUserIn(tx, campaign.id, input.phone);
-    const attemptRow = await one(tx, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
-      input.attemptId,
-      campaign.id,
-      user.id
-    ]);
-    if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
-    const attempt = mapAttempt(attemptRow);
-    const slots = (
-      await all(
-        tx,
-        `SELECT s.* FROM slots s
-         JOIN pool_slots ps ON ps.slot_id = s.id
-         WHERE ps.pool_id = ? AND s.campaign_id = ? AND s.date >= ?
-         ORDER BY s.date, s.start_time`,
-        [attempt.poolId, campaign.id, manilaDateString()]
-      )
-    ).map(mapSlot);
-    return {
-      attempt,
-      slots: slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
-    };
-  });
+  const user = await huntUserOrThrow(campaign.id, input.phone);
+  const attemptRow = await one(db, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
+    input.attemptId,
+    campaign.id,
+    user.id
+  ]);
+  if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
+  const attempt = mapAttempt(attemptRow);
+  const slots = (
+    await all(
+      db,
+      `SELECT s.* FROM slots s
+       JOIN pool_slots ps ON ps.slot_id = s.id
+       WHERE ps.pool_id = ? AND s.campaign_id = ? AND s.date >= ?
+       ORDER BY s.date, s.start_time`,
+      [attempt.poolId, campaign.id, manilaDateString()]
+    )
+  ).map(mapSlot);
+  return {
+    attempt,
+    slots: slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
+  };
 }
 
 export function selectFinalVoucher(input: {
@@ -1307,13 +1296,8 @@ async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
 export async function getHuntSnapshot(input: { campaignSlug: string; phone: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  // Identity and snapshot share one transaction so they cannot disagree — the
-  // fault this guards against had two plain reads of `attempts` contradicting
-  // each other in the same second. See huntUserIn.
-  return withReadTx(async (tx) => {
-    const user = await huntUserIn(tx, campaign.id, input.phone);
-    return huntState(tx, campaign, user);
-  });
+  const user = await huntUserOrThrow(campaign.id, input.phone);
+  return huntState(db, campaign, user);
 }
 
 /**
