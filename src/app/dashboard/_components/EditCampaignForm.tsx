@@ -1,11 +1,15 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FiImage, FiUploadCloud } from "react-icons/fi";
 import { api } from "@/lib/api-client";
+import { resolveCampaignImage } from "@/lib/campaign-image";
 import type { Campaign, CampaignSlot } from "@/types/voucher";
 import { FormCard } from "./FormPage";
+import { normalizeCampaignImage } from "./NewCampaignForm";
 import { SelectMenu } from "./SelectMenu";
 import { appendDone } from "./SlotForm";
 
@@ -48,9 +52,10 @@ function slotDate(date: string) {
  * The dates are the reason this exists. They were write-once — creation was the
  * only thing that ever set them — so a campaign whose window closed before its
  * slots (or one dated by a mistyped year) could not be rescued from the console
- * at all, and it simply vanished from the app with no way back. `heroImage` is
- * still edited on its own route, and `allowReschedule` from the list's toggle;
- * neither is duplicated here.
+ * at all, and it simply vanished from the app with no way back. The artwork is
+ * edited here too — it had its own route, reached by a second button beside
+ * every row's Edit, which split one campaign across two pages for no reason.
+ * `allowReschedule` stays on the list's toggle and is not duplicated here.
  */
 export function EditCampaignForm({
   campaign,
@@ -68,6 +73,14 @@ export function EditCampaignForm({
   const [form, setForm] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // The artwork sits outside `form`: it is not a string the admin types but a
+  // data URL produced by the file picker, and only a freshly chosen one counts
+  // as a change — the preview starts on the image already saved.
+  const [image, setImage] = useState(resolveCampaignImage(campaign)?.src ?? "");
+  const [replacementSelected, setReplacementSelected] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [imageProcessing, setImageProcessing] = useState(false);
 
   const upcomingSlots = useMemo(
     () => slots.filter((slot) => slot.date >= today).sort((a, b) => a.date.localeCompare(b.date)),
@@ -95,6 +108,27 @@ export function EditCampaignForm({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  async function handleImage(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    setError("");
+    setImageProcessing(true);
+    try {
+      setImage(await normalizeCampaignImage(file));
+      setReplacementSelected(true);
+      setFileName(file.name);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Unable to process the campaign image.",
+      );
+    } finally {
+      setImageProcessing(false);
+      input.value = "";
+    }
+  }
+
   /**
    * Only what actually changed. Sending the whole form would re-validate fields
    * the admin never touched — and would arm the window check on every save,
@@ -120,6 +154,7 @@ export function EditCampaignForm({
     if (form.shopUrl.trim() && form.shopUrl.trim() !== initial.shopUrl) {
       patch.shopUrl = form.shopUrl.trim();
     }
+    if (replacementSelected && image) patch.heroImage = image;
     return patch;
   }
 
@@ -271,7 +306,7 @@ export function EditCampaignForm({
 
       <FormCard
         title="Content"
-        description="The customer-facing wording. The campaign's business, category, and artwork are changed elsewhere."
+        description="The customer-facing wording. The campaign's business and category are changed elsewhere."
       >
         <div className="admin-form-grid">
           <label className="field">
@@ -312,13 +347,59 @@ export function EditCampaignForm({
         </label>
       </FormCard>
 
+      <FormCard
+        title="Campaign artwork"
+        description="Shown on the campaign page and on the customer's voucher. The image is center-cropped to 2:1 and optimized before it is saved."
+      >
+        <div className="field campaign-image-field">
+          <span>{replacementSelected ? "New image" : "Current image"}</span>
+          <div className="campaign-image-preview">
+            {image ? (
+              <Image
+                alt={`${campaign.title} campaign image preview`}
+                fill
+                sizes="(max-width: 760px) calc(100vw - 80px), 640px"
+                src={image}
+                unoptimized
+              />
+            ) : (
+              <div
+                aria-label={`${campaign.title} current campaign artwork`}
+                className="campaign-image-legacy-preview"
+                role="img"
+                style={{ background: "var(--canvas)" }}
+              >
+                <FiImage aria-hidden="true" />
+              </div>
+            )}
+          </div>
+
+          <label className="campaign-image-upload">
+            <input
+              accept="image/png,image/jpeg,image/webp"
+              className="visually-hidden"
+              disabled={busy || imageProcessing}
+              onChange={handleImage}
+              type="file"
+            />
+            <FiUploadCloud aria-hidden="true" />
+            <span>
+              <strong>
+                {imageProcessing ? "Processing image..." : "Choose replacement image"}
+              </strong>
+              <small>{fileName || "PNG, JPEG, or WebP - up to 5 MB"}</small>
+            </span>
+          </label>
+        </div>
+      </FormCard>
+
       <div className="form-page-actions">
         <Link className="button secondary" href={LIST_HREF}>
           Cancel
         </Link>
         <button
           className="button"
-          disabled={busy || datesReversed || strandedDates.length > 0}
+          disabled={busy || imageProcessing || datesReversed || strandedDates.length > 0}
           type="submit"
         >
           {busy ? "Saving..." : "Save Campaign"}

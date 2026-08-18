@@ -24,7 +24,6 @@ const MESSAGES: Record<string, string> = {
   "business-saved": "Business details saved.",
   "member-created": "Team member created. Share their password with them once.",
   "member-saved": "Team member updated.",
-  "campaign-image-saved": "Campaign image updated.",
   "campaign-saved": "Campaign updated.",
 };
 

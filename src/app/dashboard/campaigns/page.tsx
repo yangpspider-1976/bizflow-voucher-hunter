@@ -1,4 +1,4 @@
-import { FiEdit2, FiImage } from "react-icons/fi";
+import { FiEdit2 } from "react-icons/fi";
 import { CampaignFlagToggles } from "../_components/CampaignFlagToggles";
 import { FlashNotice } from "../_components/FlashNotice";
 import { FormLink } from "../_components/FormLink";
@@ -85,14 +85,6 @@ export default async function CampaignsPage() {
                         >
                           <FiEdit2 aria-hidden="true" />
                           Edit
-                        </FormLink>
-                        <FormLink
-                          className="campaign-edit-image-button"
-                          href={`/dashboard/campaigns/${campaign.id}/image`}
-                          skeleton="campaignImage"
-                        >
-                          <FiImage aria-hidden="true" />
-                          Edit image
                         </FormLink>
                       </div>
                     </div>
