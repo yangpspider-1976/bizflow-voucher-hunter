@@ -34,7 +34,7 @@ other visitor is sent to `/client` to install it. Do not rebuild pages there.
 - Desktop-optimized admin dashboard
 - Desktop-optimized staff validation and redemption page (vouchers, LP vouchers, wallet QR credit)
 - Push notifications to the app (`docs/NOTIFICATIONS.md`) and app localization (`docs/I18N.md`)
-- libSQL/Turso persistence (`@libsql/client`) with transactional, race-safe stock control — serverless-ready for Vercel
+- PostgreSQL persistence (`pg`) with transactional, race-safe stock control — serverless-ready for Vercel
 - Admin CRUD API for campaigns, slots, and voucher pools (session + token guarded)
 - Real SMS delivery layer (Movider/Twilio/Infobip/ClickSend) with mock fallback
 - Server-enforced referral extra attempts
@@ -165,7 +165,7 @@ curl -X POST http://127.0.0.1:3000/api/campaigns \
 - Inter (UI) and Outfit (product wordmark) via `next/font/local`
 - Vitest
 - Playwright test scaffold
-- libSQL datastore (`@libsql/client`): a local SQLite file for dev/tests (`DATABASE_PATH`), Turso (`DATABASE_URL`) in production
+- PostgreSQL datastore (`pg`), one `DATABASE_URL` everywhere and a separate `TEST_DATABASE_URL` for tests
 
 ## Setup
 
@@ -225,33 +225,42 @@ Detailed manual and automated test instructions are in:
 docs/TESTING.md
 ```
 
-## Database (libSQL / Turso)
+## Database (PostgreSQL)
 
-The data layer uses `@libsql/client`, which speaks the SQLite dialect over a
-local file **or** a hosted Turso database:
+The data layer is PostgreSQL via `pg`. Statements are written in SQLite's
+dialect and translated in `src/server/pg-sql.ts` — `?` and `@name` binding,
+`INSERT OR IGNORE` — which is what let ~300 statements across 15 modules move
+engines without being rewritten.
 
-- **Local dev & tests**: a SQLite file (`DATABASE_PATH`, default `data/bizflow.db`).
-  The schema is created and seeded automatically on first use.
-- **Production (Vercel)**: set `DATABASE_URL=libsql://<db>.turso.io` and
-  `DATABASE_AUTH_TOKEN=<token>`. When `DATABASE_URL` is set it takes precedence.
+- **Every environment**: `DATABASE_URL=postgres://…`. There is no local-file
+  mode; the schema is created and seeded automatically on first use.
+- **Tests**: `TEST_DATABASE_URL`, and nothing else. `resolveUrl()` refuses to
+  fall back to `DATABASE_URL` for a test run, because `resetDb()` empties every
+  table — a misconfigured run pointed at production would not fail, it would
+  succeed.
 
-To deploy on Vercel: create a free Turso DB (`turso db create` + `turso db tokens create`),
-add `DATABASE_URL` / `DATABASE_AUTH_TOKEN` (and `ADMIN_SESSION_SECRET`, admin creds,
-SMS keys) as project env vars, and deploy. The schema/seed runs on the first request.
+To deploy on Vercel: create a Postgres database (Neon is the least friction, and
+put it in the region your functions run in — a database an ocean away adds a
+round trip to every query), set `DATABASE_URL`, and deploy. The schema and seed
+run on the first request.
 
-To regenerate seeded demo data locally, stop the dev server and delete
-`data/bizflow.db*`; the next load recreates and reseeds it. Tests use a separate
-`data/test-bizflow.db`.
+To regenerate seeded demo data, wipe the database from the dashboard's Danger
+Zone; the next request recreates and reseeds it.
+
+**Why not SQLite/Turso:** the hosted libSQL this ran on began returning
+incomplete results — a committed row invisible to one route's reads while
+another route and the database console both saw it, reproduced across two
+separate databases. `docs/deployment/runbook.md` has the detail.
 
 ## Stock Control & Concurrency
 
 Slot capacity and voucher-pool quantity are protected against race conditions:
 
-- Every mutation runs inside a libSQL write transaction (`withTx`).
+- Every mutation runs inside a PostgreSQL write transaction (`withTx`).
 - Stock and capacity are reduced with conditional updates (`... WHERE remaining > 0`) and the affected-row count is verified, so a depleted pool/slot can never be over-issued.
 - A `UNIQUE(campaign_id, user_id)` constraint on `vouchers` is the authoritative guard for the "one final voucher per phone per campaign" rule under concurrent selects.
 
-Covered by `tests/integration/concurrency.test.ts`. On Turso these guarantees hold across serverless instances (single primary with transactional writes).
+Covered by `tests/integration/concurrency.test.ts`. The guarantees hold across serverless instances: one primary, and every stock change inside a transaction.
 
 ## Security
 
@@ -292,7 +301,7 @@ Staff and admin access runs through `admin_users` accounts managed at
 
 Before production:
 
-- Provision a Turso database and set `DATABASE_URL` / `DATABASE_AUTH_TOKEN` (the data layer is already serverless-ready via `@libsql/client`).
+- Provision a PostgreSQL database and set `DATABASE_URL` (the data layer is serverless-ready via `pg`, pooled).
 - Set `ADMIN_SESSION_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_ACCESS_TOKEN`. Production has no bootstrap fallback — the login route returns `E-ADMIN-CONFIG` without them.
 - Set `TRUSTED_PROXY_HOPS` to the real proxy depth and leave `ENABLE_DEV_TOOLS` unset.
 - Configure a real SMS provider. Use `SMS_PROVIDER=smpp_worker` for the hosted SMPP path, since binding directly from Vercel never works (see `.env.example`). Standing up that host is `docs/deployment/smpp-worker.md`.

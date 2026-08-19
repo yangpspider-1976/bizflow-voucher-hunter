@@ -10,7 +10,7 @@ Read this whole file before writing code. It encodes decisions already made — 
 ## 0. Project snapshot
 
 - **Repo:** `bizflow-voucher-hunter` — a Next.js 14 (App Router) + TypeScript full-stack app.
-- **DB:** libSQL/Turso (`@libsql/client`), async. Local dev uses a SQLite file (`DATABASE_PATH`); prod uses `DATABASE_URL` (Turso).
+- **DB:** PostgreSQL (`pg`), async. Every environment uses `DATABASE_URL`; tests use their own `TEST_DATABASE_URL`.
 - **What the product does:** a customer signs in by phone (SMS OTP), spins a "voucher roulette" to reveal one candidate voucher, picks a date/time slot the winning tier is offered at, and confirms to issue a final voucher (with QR). There is a Loyalty Points wallet, a referral bonus-spin system, an admin dashboard, and a staff QR-validation screen.
 - **This is NOT a static SPA.** It uses server components, server-side redirect auth-gates, API routes, cookie auth, and server-side SMS. The server must keep running (Vercel/Node host). The mobile app is a **client that talks to this backend over HTTP** — it does not bundle the server.
 

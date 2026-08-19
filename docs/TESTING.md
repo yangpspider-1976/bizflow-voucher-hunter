@@ -70,14 +70,16 @@ purely as redirects to their global equivalents, so old links keep working.
 
 ## 2. Reset Test Data
 
-The app uses a local **libSQL / SQLite** database, configured in `.env`:
+The app uses **PostgreSQL**, configured in `.env`:
 
 ```text
-DATABASE_PATH=./data/bizflow.db
+DATABASE_URL=postgres://user:password@host/dbname?sslmode=require
+TEST_DATABASE_URL=postgres://user:password@host/dbname_test?sslmode=require
 ```
 
-(Production requires `DATABASE_URL` and `DATABASE_AUTH_TOKEN`; development and
-tests always use the local `DATABASE_PATH` so test data cannot touch production.)
+(Every environment needs `DATABASE_URL`. Tests additionally demand
+`TEST_DATABASE_URL` and refuse to fall back to `DATABASE_URL`, so a misconfigured
+run cannot empty production.)
 
 The schema is created and seeded automatically on first DB access. There are four ways to reset:
 
@@ -467,7 +469,7 @@ Responsive checks:
 - `npm run test:e2e` (Playwright) is available but has been flaky in this environment; unit/integration/typecheck/lint/build are the primary gates.
 - SMPP delivery depends on the SMSC account: sends can be rejected with `ESME_RTHROTTLED` (throttled/quota) or `ESME_RINVSRCADR` (unregistered sender). These are account-side, not code issues — verify limits with the provider.
 - GSM multipart concatenation relies on the SMSC packing UDH+GSM correctly; UCS-2 multipart is the more portable fallback. Verify a deliberately long message arrives intact on a handset before relying on it.
-- The local datastore is SQLite via libSQL. Production concurrency/stock-control testing should be repeated against Turso/PostgreSQL.
+- The datastore is PostgreSQL in every environment, so concurrency and stock-control tests exercise the same engine production runs.
 - **Staff QR scanning is hidden when the device has no camera** (typical on desktop) — only *Upload QR Image* shows. To exercise the scanner, test on a phone or a laptop with a webcam.
 - **My Vouchers is device-local.** The wallet is stored in this browser's `localStorage`, so vouchers issued on one device do not appear on another, and a database reset does not clear an already-cached list.
 - **Rate limits apply to sign-in OTP**: 5 requests / 5 min for `request-otp`, 10 / 5 min for `verify-otp`. Repeated smoke testing from one IP can trip these; wait out the window or restart the dev server.
