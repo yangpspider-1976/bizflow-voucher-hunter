@@ -366,6 +366,15 @@ export default function CampaignLandingScreen() {
 
           {actionError ? <InlineError message={actionError} /> : null}
 
+          {/* Sits with the button rather than up by the title: the question it
+              answers — why does this say Continue — is asked at the button. */}
+          {canResume ? (
+            <View style={styles.progressNote}>
+              <View style={styles.progressDot} />
+              <Text style={styles.progressNoteText}>{t("campaign.inProgress")}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.action}>
             <Button
               disabled={huntBlocked}
@@ -875,6 +884,31 @@ const styles = StyleSheet.create({
   },
   action: {
     marginTop: spacing.sm,
+  },
+  progressNote: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    flexDirection: "row",
+    gap: 7,
+    marginTop: spacing.md,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  // A filled dot rather than an icon: this is a status, and the row reads as
+  // one line of text with a marker rather than as another control.
+  progressDot: {
+    backgroundColor: colors.primary,
+    borderRadius: 4,
+    height: 8,
+    width: 8,
+  },
+  progressNoteText: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
+    fontSize: 12,
+    letterSpacing: 0.2,
   },
   notice: {
     alignItems: "flex-start",

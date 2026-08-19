@@ -52,6 +52,7 @@ export default function RouletteScreen() {
     flow,
     huntWasEntered,
     loading,
+    pools,
     refreshSnapshot,
     sessionId,
     slug,
@@ -71,7 +72,12 @@ export default function RouletteScreen() {
   const reel = useRef<RouletteReelHandle>(null);
 
   const [phase, setPhase] = useState<Phase>("idle");
-  const [items, setItems] = useState<RoulettePreview[]>(placeholderRouletteItems());
+  // Placeholders only when the tiers have not arrived yet. They are prizes from
+  // no campaign in particular, so showing them is showing the customer vouchers
+  // this campaign does not offer.
+  const [items, setItems] = useState<RoulettePreview[]>(() =>
+    pools.length > 0 ? rouletteLoop(pools) : placeholderRouletteItems(),
+  );
   const [settledIndex, setSettledIndex] = useState<number | null>(null);
   const [winner, setWinner] = useState<RoulettePreview | null>(null);
   const [error, setError] = useState("");
@@ -97,9 +103,21 @@ export default function RouletteScreen() {
   // resumed reel could sit spinning forever with nothing left to land it.
   const flowRef = useRef(flow);
   flowRef.current = flow;
+  // Read the same way and for the same reason: the spin decides once, and the
+  // tiers may land after it started.
+  const poolsRef = useRef(pools);
+  poolsRef.current = pools;
   const drawAbort = useRef<AbortController | null>(null);
   // Invalidates draw/landing work that began before a development reset.
   const generation = useRef(0);
+
+  // Swapping the cards after the reel has a result would move the winner out
+  // from under the arrow, so this only applies while it is still free-spinning.
+  const landed = useRef(false);
+  useEffect(() => {
+    if (landed.current || pools.length === 0) return;
+    setItems(rouletteLoop(pools));
+  }, [pools]);
 
   const runStop = useCallback(
     async (draw: {
@@ -113,6 +131,7 @@ export default function RouletteScreen() {
       // The button reports the coast itself, in place of its own label.
       setPhase("landing");
 
+      landed.current = true;
       const landedIndex = await reel.current?.stopOn(draw.winner, draw.items);
       if (generation.current !== currentGeneration) return;
       setSettledIndex(landedIndex ?? null);
@@ -213,9 +232,12 @@ export default function RouletteScreen() {
       let previews: RoulettePreview[] = [];
 
       try {
-        previews = await getCampaignPools(slug, token!).catch(
-          () => [] as RoulettePreview[],
-        );
+        previews =
+          poolsRef.current.length > 0
+            ? poolsRef.current
+            : await getCampaignPools(slug, token!).catch(
+                () => [] as RoulettePreview[],
+              );
         if (active && previews.length > 0) {
           setItems(rouletteLoop(previews));
         }

@@ -18,8 +18,10 @@ import {
 
 import {
   getCampaign,
+  getCampaignPools,
   getHuntState,
   startHunt,
+  type RoulettePreview,
   type HuntState,
   type PublicCampaign,
   type PublicSlot,
@@ -93,6 +95,15 @@ type HuntContextValue = {
   slug: string;
   /** Campaign + business + all slots, from `GET /campaigns/[slug]`. */
   campaign: PublicCampaign | null;
+  /**
+   * This campaign's benefit tiers, fetched with the campaign itself.
+   *
+   * Loaded here rather than by the reel so the reel opens already holding them.
+   * Fetching them on arrival meant it span placeholders first — tiers from no
+   * campaign in particular — and then replaced all twelve cards mid-spin, which
+   * showed prizes this campaign does not offer and stuttered as they swapped.
+   */
+  pools: RoulettePreview[];
   loading: boolean;
   /** Raw thrown error, so screens can tell offline apart from a server failure. */
   error: unknown;
@@ -203,6 +214,7 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
   // Bumped to re-run the load effect without duplicating its body.
   const [reloadToken, setReloadToken] = useState(0);
   const [sessionId, setSessionId] = useState("");
+  const [pools, setPools] = useState<RoulettePreview[]>([]);
   const [flow, setFlow] = useState<FlowState>(emptyFlow);
   // Gates the progress writer: until the stored resume point has been read back,
   // this campaign's flow is empty by default rather than by choice, and saving
@@ -294,17 +306,22 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       // describes the previous campaign, and showing any of it against a new slug
       // is wrong — an issued voucher most of all.
       setCampaign(null);
+      setPools([]);
       setFlow(emptyFlow);
       setHydrated(false);
       try {
-        const [session, publicCampaign, progress] = await Promise.all([
+        const [session, publicCampaign, progress, tiers] = await Promise.all([
           getVisitorSessionId(),
           getCampaign(slug, token),
           readHuntProgress(slug),
+          // Not fatal: the reel falls back to fetching them itself, and to
+          // placeholders while it waits.
+          getCampaignPools(slug, token).catch(() => [] as RoulettePreview[]),
         ]);
         if (!active) return;
         setSessionId(session);
         setCampaign(publicCampaign);
+        setPools(tiers);
         // Seeded before the snapshot, so the reconcile below judges the
         // remembered selection against what the server still holds instead of
         // treating this as a hunt that never started.
@@ -467,6 +484,7 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
     () => ({
       slug,
       campaign,
+      pools,
       loading,
       error,
       reload,
@@ -486,6 +504,7 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       addAttempt,
       begin,
       campaign,
+      pools,
       error,
       flow,
       reload,
