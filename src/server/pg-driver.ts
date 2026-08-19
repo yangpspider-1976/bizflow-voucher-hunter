@@ -100,9 +100,10 @@ export function createClient(config: PgClientConfig): Client {
   }
 
   // A test run is one process importing the database module once per file, so
-  // the pools accumulate: 48 files holding three idle sockets each exhausted the
-  // connection limit and 16 tests failed on acquisition rather than on anything
-  // they asserted. Tests therefore keep one connection and drop it quickly.
+  // the pools accumulate. Tests drop idle sockets quickly for that reason — but
+  // keep the same ceiling as production: a single connection deadlocks the
+  // moment a held transaction needs a second one, which is exactly what the
+  // concurrency tests arrange on purpose.
   const testing = Boolean(process.env.VITEST);
 
   const pool = new Pool({
@@ -110,7 +111,7 @@ export function createClient(config: PgClientConfig): Client {
     // Serverless invocations are short and numerous, and a pooler (or Postgres
     // itself) refuses connections long before the app notices. Keep each
     // instance's footprint small and let idle sockets go.
-    max: config.max ?? (testing ? 1 : 3),
+    max: config.max ?? 3,
     idleTimeoutMillis: testing ? 1_000 : 10_000,
     // Generous on purpose: a database that scales to zero answers its first
     // connection with a cold start, and failing that is worse than waiting.
