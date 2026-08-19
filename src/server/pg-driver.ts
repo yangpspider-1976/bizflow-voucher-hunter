@@ -1,5 +1,7 @@
 import { Pool, types, type PoolClient } from "pg";
 
+import { mergeInserts, type BoundStatement } from "@/server/pg-batch";
+
 /**
  * A libSQL-shaped client backed by PostgreSQL.
  *
@@ -172,15 +174,19 @@ function split(statement: InStatement): { sql: string; args: InArgs } {
     : { sql: statement.sql, args: statement.args ?? [] };
 }
 
+function bind(statement: InStatement): BoundStatement {
+  const { sql, args } = split(statement);
+  const dialect = toPostgresDialect(sql);
+  return Array.isArray(args)
+    ? { text: toPositional(dialect), values: args }
+    : toNamed(dialect, args);
+}
+
 async function runOn(
   runner: Pool | PoolClient,
   statement: InStatement,
 ): Promise<ResultSet> {
-  const { sql, args } = split(statement);
-  const dialect = toPostgresDialect(sql);
-  const bound = Array.isArray(args)
-    ? { text: toPositional(dialect), values: args }
-    : toNamed(dialect, args);
+  const bound = bind(statement);
   const result = await runner.query(bound.text, bound.values);
   return {
     rows: (result.rows ?? []) as Row[],
@@ -244,8 +250,20 @@ export function createClient(config: PgClientConfig): Client {
       try {
         if (mode === "write") await client.query("BEGIN");
         const results: ResultSet[] = [];
-        for (const statement of statements) {
-          results.push(await runOn(client, statement));
+        // Merging is confined to write batches, and that is a correctness
+        // boundary rather than a heuristic: merging returns one result per
+        // merged group instead of one per statement. Every write caller in the
+        // app discards the return; `batchAll` is the only consumer and it reads,
+        // destructuring the array positionally — misaligning that would hand a
+        // dashboard one rollup's rows under another's name.
+        const prepared = statements.map(bind);
+        const sending = mode === "write" ? mergeInserts(prepared) : prepared;
+        for (const bound of sending) {
+          const result = await client.query(bound.text, bound.values);
+          results.push({
+            rows: (result.rows ?? []) as Row[],
+            rowsAffected: result.rowCount ?? 0,
+          });
         }
         if (mode === "write") await client.query("COMMIT");
         return results;
