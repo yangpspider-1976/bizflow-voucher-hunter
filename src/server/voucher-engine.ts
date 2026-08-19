@@ -21,6 +21,7 @@ import {
   mapVoucher,
   one,
   run,
+  withReadTx,
   withTx
 } from "@/server/db";
 import { toDisplayPhone } from "@/lib/phone-display";
@@ -623,8 +624,8 @@ export async function startHunt(input: {
     await addAnalytics(tx, campaign.id, "hunt_started", { phone: user.phone }, user.id);
     return { campaign, user };
   });
-  const db = await getDb();
-  return huntState(db, result.campaign, result.user);
+  // Read the snapshot back through a transaction, not `getDb()` — see huntUserIn.
+  return withReadTx((tx) => huntState(tx, result.campaign, result.user));
 }
 
 /**
@@ -807,12 +808,51 @@ export function generateCandidate(input: {
  * This treats a symptom — the root cause is below the application and is still
  * open with Turso. Remove it once a plain read of `users` is trustworthy.
  */
-async function huntUserOrThrow(campaignId: string, phone: string): Promise<EndUser> {
+/**
+ * A customer's hunt rows are read inside a read transaction, never through `getDb()`.
+ *
+ * The transaction is not for atomicity. It is because plain reads are not
+ * reliable against the deployed libSQL, measured in production on 2026-08-18:
+ *
+ *  - `SELECT * FROM users WHERE campaign_id = ? AND phone = ?` returned no row
+ *    through `getDb()` for every dashboard-created campaign, while the identical
+ *    statement with the same arguments returned the row every time from inside a
+ *    transaction. The three seeded campaigns were unaffected and two different
+ *    phone numbers behaved the same, so it tracked the campaign, not the caller.
+ *  - `attempts` then showed the same fault, and worse: two plain reads of that
+ *    one table disagreed with each other in the same second. `huntState` listed
+ *    an attempt that `listSlotsForAttempt` 404'd on, and found none of an
+ *    attempt the write had just returned and that `listSlotsForAttempt` could
+ *    read back perfectly.
+ *
+ * The rows were demonstrably present — `PRAGMA integrity_check` ok, no duplicate
+ * slugs, byte-exact `campaign_id` and `phone`.
+ *
+ * Confirmed again on 2026-08-19 with only the identity read made transactional:
+ * the user resolved correctly while `GET /hunt/state` returned `attempts: []`
+ * for a live `Candidate` that the admin export read back from the same
+ * deployment minutes later. Half of this is not enough — every read behind the
+ * decision has to share the write path's view.
+ *
+ * Both faults are customer-visible and neither degrades gracefully. A stale
+ * `users` read means a voucher can be won and never booked. A stale `attempts`
+ * read means a drawn candidate vanishes: the campaign offers a fresh hunt for a
+ * voucher already held, and the results screen shows nothing at all. So
+ * `huntState` takes its whole snapshot from one transaction, and its parts
+ * cannot disagree with each other either.
+ *
+ * A *read* transaction, deliberately. The first attempt at this used `withTx`,
+ * whose write lock on a path this hot took production down inside a minute —
+ * concurrent requests queued on the lock and failed at ~2s each. A read
+ * transaction gives the same consistent snapshot and contends with nothing.
+ *
+ * This treats a symptom — the cause is below the application and is still open
+ * with Turso. Remove it once a plain read of these tables is trustworthy.
+ */
+async function huntUserIn(db: Exec, campaignId: string, phone: string): Promise<EndUser> {
   const normalized = normalizePhone(phone);
   const userRow = normalized
-    ? await withTx((tx) =>
-        one(tx, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaignId, normalized])
-      )
+    ? await one(db, "SELECT * FROM users WHERE campaign_id = ? AND phone = ?", [campaignId, normalized])
     : undefined;
   if (!userRow) throw new AppError("E-USER-404", "No hunt session found for this phone number", 404);
   return mapUser(userRow);
@@ -821,28 +861,31 @@ async function huntUserOrThrow(campaignId: string, phone: string): Promise<EndUs
 export async function listSlotsForAttempt(input: { campaignSlug: string; phone: string; attemptId: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  const user = await huntUserOrThrow(campaign.id, input.phone);
-  const attemptRow = await one(db, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
-    input.attemptId,
-    campaign.id,
-    user.id
-  ]);
-  if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
-  const attempt = mapAttempt(attemptRow);
-  const slots = (
-    await all(
-      db,
-      `SELECT s.* FROM slots s
-       JOIN pool_slots ps ON ps.slot_id = s.id
-       WHERE ps.pool_id = ? AND s.campaign_id = ? AND s.date >= ?
-       ORDER BY s.date, s.start_time`,
-      [attempt.poolId, campaign.id, manilaDateString()]
-    )
-  ).map(mapSlot);
-  return {
-    attempt,
-    slots: slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
-  };
+  // One transaction for the identity, the attempt and its slots — see huntUserIn.
+  return withReadTx(async (tx) => {
+    const user = await huntUserIn(tx, campaign.id, input.phone);
+    const attemptRow = await one(tx, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
+      input.attemptId,
+      campaign.id,
+      user.id
+    ]);
+    if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
+    const attempt = mapAttempt(attemptRow);
+    const slots = (
+      await all(
+        tx,
+        `SELECT s.* FROM slots s
+         JOIN pool_slots ps ON ps.slot_id = s.id
+         WHERE ps.pool_id = ? AND s.campaign_id = ? AND s.date >= ?
+         ORDER BY s.date, s.start_time`,
+        [attempt.poolId, campaign.id, manilaDateString()]
+      )
+    ).map(mapSlot);
+    return {
+      attempt,
+      slots: slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
+    };
+  });
 }
 
 export function selectFinalVoucher(input: {
@@ -1327,8 +1370,13 @@ async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
 export async function getHuntSnapshot(input: { campaignSlug: string; phone: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  const user = await huntUserOrThrow(campaign.id, input.phone);
-  return huntState(db, campaign, user);
+  // Identity and snapshot share one transaction so they cannot disagree — the
+  // fault this guards against had two plain reads of `attempts` contradicting
+  // each other in the same second. See huntUserIn.
+  return withReadTx(async (tx) => {
+    const user = await huntUserIn(tx, campaign.id, input.phone);
+    return huntState(tx, campaign, user);
+  });
 }
 
 /**
