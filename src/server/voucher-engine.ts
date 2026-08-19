@@ -21,6 +21,7 @@ import {
   mapVoucher,
   one,
   run,
+  withFreshReadTx,
   withReadTx,
   withTx
 } from "@/server/db";
@@ -861,8 +862,10 @@ async function huntUserIn(db: Exec, campaignId: string, phone: string): Promise<
 export async function listSlotsForAttempt(input: { campaignSlug: string; phone: string; attemptId: string }) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
-  // One transaction for the identity, the attempt and its slots — see huntUserIn.
-  return withReadTx(async (tx) => {
+  // One transaction for the identity, the attempt and its slots, on its own
+  // connection — see huntUserIn and withFreshReadTx. This is the read that
+  // 404'd on an attempt the snapshot had just listed.
+  return withFreshReadTx(async (tx) => {
     const user = await huntUserIn(tx, campaign.id, input.phone);
     const attemptRow = await one(tx, "SELECT * FROM attempts WHERE id = ? AND campaign_id = ? AND user_id = ?", [
       input.attemptId,
@@ -1372,8 +1375,10 @@ export async function getHuntSnapshot(input: { campaignSlug: string; phone: stri
   const campaign = await getCampaignOrThrow(db, input.campaignSlug);
   // Identity and snapshot share one transaction so they cannot disagree — the
   // fault this guards against had two plain reads of `attempts` contradicting
-  // each other in the same second. See huntUserIn.
-  return withReadTx(async (tx) => {
+  // each other in the same second. On its own connection because this process's
+  // cached one has been seen serving a view that never caught up. See
+  // huntUserIn and withFreshReadTx.
+  return withFreshReadTx(async (tx) => {
     const user = await huntUserIn(tx, campaign.id, input.phone);
     return huntState(tx, campaign, user);
   });

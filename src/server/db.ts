@@ -500,17 +500,20 @@ CREATE INDEX IF NOT EXISTS idx_reward_audit_entity ON reward_audit_logs (entity_
 let client: Client | null = null;
 let readyPromise: Promise<void> | null = null;
 
+function clientConfig() {
+  return {
+    url: resolveUrl(),
+    authToken:
+      process.env.NODE_ENV === "production"
+        ? process.env.DATABASE_AUTH_TOKEN
+        : undefined,
+    intMode: "number" as const,
+  };
+}
+
 function rawClient(): Client {
   if (!client) {
-    const url = resolveUrl();
-    client = createClient({
-      url,
-      authToken:
-        process.env.NODE_ENV === "production"
-          ? process.env.DATABASE_AUTH_TOKEN
-          : undefined,
-      intMode: "number",
-    });
+    client = createClient(clientConfig());
   }
   return client;
 }
@@ -1136,6 +1139,42 @@ export async function withReadTx<T>(fn: (tx: Transaction) => Promise<T>): Promis
     return await fn(tx);
   } finally {
     tx.close();
+  }
+}
+
+/**
+ * A read transaction on a connection of its own, closed straight after.
+ *
+ * Every read this process has served from the long-lived client in `rawClient`
+ * is only as current as that client's view, and on 2026-08-19 one route's view
+ * stopped advancing: `GET /hunt/state` returned one of a customer's two
+ * attempts for over half an hour, while the same query from other routes — and
+ * from the database console — returned both. Both rows carried exactly the
+ * campaign and user the query filtered on. The fault tracked the route, not the
+ * data, and each route on Vercel is its own warm process with its own cached
+ * client.
+ *
+ * Reads inside a *write* transaction never showed it, because a write can only
+ * be served by the primary — but taking the write lock on a path this hot is
+ * what caused the outage on 2026-08-18. A connection per read costs one setup
+ * and takes no lock, which is the affordable half of that guarantee.
+ *
+ * Deliberately not used for a read that follows a write in the same request:
+ * there the cached client is the connection that did the writing, and reading
+ * back through it is what makes the result read-your-writes consistent.
+ */
+export async function withFreshReadTx<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  await ensureReady();
+  const connection = createClient(clientConfig());
+  try {
+    const tx = await connection.transaction("read");
+    try {
+      return await fn(tx);
+    } finally {
+      tx.close();
+    }
+  } finally {
+    connection.close();
   }
 }
 

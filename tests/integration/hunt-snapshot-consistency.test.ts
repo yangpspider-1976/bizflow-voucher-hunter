@@ -40,7 +40,7 @@ describe("hunt snapshot reads", () => {
     );
   }
 
-  it("takes the whole snapshot from one read transaction", async () => {
+  it("takes the whole snapshot off the shared connection", async () => {
     await startHunt({ campaignSlug, phone, sessionId });
     await generateCandidate({ campaignSlug, phone, sessionId });
 
@@ -51,17 +51,18 @@ describe("hunt snapshot reads", () => {
     const snapshot = await getHuntSnapshot({ campaignSlug, phone });
     expect(snapshot.attempts).toHaveLength(1);
 
-    // A read transaction, never a write one: the write lock on a path this hot
-    // is what took production down when this was first attempted.
-    expect(transaction).toHaveBeenCalledWith("read");
-    expect(transaction).not.toHaveBeenCalledWith("write");
+    // Nothing the customer's hunt depends on may be read through this process's
+    // long-lived client — neither plainly nor in a transaction on it. One of
+    // those clients was measured serving a view that never caught up, for one
+    // route, for over half an hour.
+    const shared = plainSql(execute.mock.calls);
+    expect(shared.some((sql) => /FROM users/i.test(sql))).toBe(false);
+    expect(shared.some((sql) => /FROM attempts/i.test(sql))).toBe(false);
+    expect(shared.some((sql) => /FROM vouchers/i.test(sql))).toBe(false);
 
-    // The identity and the rows it scopes must not be read off the plain
-    // client, where they can disagree with the write path and with each other.
-    const plain = plainSql(execute.mock.calls);
-    expect(plain.some((sql) => /FROM users/i.test(sql))).toBe(false);
-    expect(plain.some((sql) => /FROM attempts/i.test(sql))).toBe(false);
-    expect(plain.some((sql) => /FROM vouchers/i.test(sql))).toBe(false);
+    // And never by taking the write lock, which is what caused the outage the
+    // first time this was fixed.
+    expect(transaction).not.toHaveBeenCalledWith("write");
   });
 
   it("reads the slot picker's candidate the same way", async () => {
@@ -81,10 +82,10 @@ describe("hunt snapshot reads", () => {
     });
     expect(attempt.id).toBe(candidate.id);
 
-    expect(transaction).toHaveBeenCalledWith("read");
-    const plain = plainSql(execute.mock.calls);
-    expect(plain.some((sql) => /FROM users/i.test(sql))).toBe(false);
-    expect(plain.some((sql) => /FROM attempts/i.test(sql))).toBe(false);
+    expect(transaction).not.toHaveBeenCalledWith("write");
+    const shared = plainSql(execute.mock.calls);
+    expect(shared.some((sql) => /FROM users/i.test(sql))).toBe(false);
+    expect(shared.some((sql) => /FROM attempts/i.test(sql))).toBe(false);
   });
 
   it("hands back a freshly started hunt through the same view", async () => {
@@ -94,9 +95,9 @@ describe("hunt snapshot reads", () => {
     const db = await getDb();
     const transaction = vi.spyOn(db, "transaction");
     await startHunt({ campaignSlug, phone, sessionId });
-    // The write commits first, then the snapshot is read back — a plain read
-    // there is what returned a user the client had just created and could not
-    // then find.
+    // The one hunt read that stays on the shared client, and must: it follows
+    // this request's own write, so that connection is the one whose view is
+    // guaranteed to contain it.
     expect(transaction).toHaveBeenCalledWith("read");
   });
 });
