@@ -116,7 +116,10 @@ export async function listAdminUsers(): Promise<AdminUser[]> {
   const db = await getDb();
   const rows = await all(
     db,
-    "SELECT * FROM admin_users ORDER BY role, name COLLATE NOCASE",
+    // LOWER(name) rather than a collation: SQLite spells case-insensitive
+    // ordering as COLLATE NOCASE, Postgres has no such collation, and the only
+    // thing this needs is that "alice" and "Alice" sort together.
+    "SELECT * FROM admin_users ORDER BY role, LOWER(name)",
   );
   return rows.map(mapAdminUser);
 }

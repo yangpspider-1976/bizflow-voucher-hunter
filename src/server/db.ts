@@ -528,7 +528,10 @@ let client: Client | null = null;
 let readyPromise: Promise<void> | null = null;
 
 function clientConfig() {
-  return { url: resolveUrl() };
+  // DATABASE_SCHEMA is optional everywhere and unset in production. The schema
+  // migration tests use it to give each scenario a database of its own without
+  // needing a database of its own.
+  return { url: resolveUrl(), schema: process.env.DATABASE_SCHEMA?.trim() };
 }
 
 function rawClient(): Client {

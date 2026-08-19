@@ -78,24 +78,55 @@ export interface Client {
 
 export type PgClientConfig = {
   url: string;
+  /**
+   * Postgres schema to work in, if not the connection's default.
+   *
+   * Set per connection rather than per query, because the pool hands out a
+   * different backend each time and a `SET` issued once would apply to whichever
+   * one happened to run it.
+   */
+  schema?: string;
   /** Accepted for call-compatibility with libSQL; Postgres auth is in the URL. */
   authToken?: string;
   max?: number;
 };
 
 export function createClient(config: PgClientConfig): Client {
+  // Interpolated, not bound: an identifier cannot be a parameter. Constrained
+  // to a plain identifier so it cannot carry anything else into the statement.
+  const schema = config.schema?.trim();
+  if (schema && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema)) {
+    throw new Error(`Invalid database schema name: ${schema}`);
+  }
+
+  // A test run is one process importing the database module once per file, so
+  // the pools accumulate: 48 files holding three idle sockets each exhausted the
+  // connection limit and 16 tests failed on acquisition rather than on anything
+  // they asserted. Tests therefore keep one connection and drop it quickly.
+  const testing = Boolean(process.env.VITEST);
+
   const pool = new Pool({
     connectionString: config.url,
     // Serverless invocations are short and numerous, and a pooler (or Postgres
-    // itself) will refuse connections long before the app notices. Keep each
+    // itself) refuses connections long before the app notices. Keep each
     // instance's footprint small and let idle sockets go.
-    max: config.max ?? 3,
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    max: config.max ?? (testing ? 1 : 3),
+    idleTimeoutMillis: testing ? 1_000 : 10_000,
+    // Generous on purpose: a database that scales to zero answers its first
+    // connection with a cold start, and failing that is worse than waiting.
+    connectionTimeoutMillis: 30_000,
   });
 
   // An idle client erroring (a pooler recycling it, a network blip) emits on the
   // pool. Unhandled, that is an uncaught exception that takes the process down.
+  if (schema) {
+    // Queries on a given client are serialised, so this lands before anything
+    // the caller sends on the same connection.
+    pool.on("connect", (client) => {
+      void client.query(`SET search_path TO ${schema}`);
+    });
+  }
+
   pool.on("error", () => {
     // Deliberately swallowed: the pool discards the socket and the next query
     // takes a fresh one. Nothing here is worth crashing a request for.
