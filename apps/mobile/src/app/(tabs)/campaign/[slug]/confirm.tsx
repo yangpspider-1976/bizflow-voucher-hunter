@@ -11,6 +11,7 @@ import { BusinessDetailsCard } from "@/components/BusinessDetailsCard";
 import { StepHeader, SummaryList, SummaryRow } from "@/components/HuntUi";
 import { VoucherTicket } from "@/components/VoucherTicket";
 import { useHunt } from "@/hunt/HuntContext";
+import { useReturnToLanding } from "@/hunt/useReturnToLanding";
 import {
   campaignModeLabel,
   formatDate,
@@ -36,6 +37,7 @@ export default function ConfirmScreen() {
     slotById,
     slug,
   } = useHunt();
+  const returnToLanding = useReturnToLanding(slug);
   // The navigator keeps one stack for every campaign and swaps the parameter,
   // so this screen can find itself rendering a campaign nobody opened it for —
   // the customer taps a new campaign in the directory and lands here instead of
@@ -45,8 +47,8 @@ export default function ConfirmScreen() {
   useEffect(() => {
     if (bounced.current || huntWasEntered()) return;
     bounced.current = true;
-    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
-  }, [huntWasEntered, router, slug]);
+    returnToLanding();
+  }, [huntWasEntered, returnToLanding]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

@@ -8,6 +8,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, InlineError } from "@/components/FormControls";
 import { InfoCard, SelectedStrip, SlotRow, StepHeader } from "@/components/HuntUi";
 import { useHunt } from "@/hunt/HuntContext";
+import { useReturnToLanding } from "@/hunt/useReturnToLanding";
 import { recoverSelection } from "@/hunt/recoverSelection";
 import {
   formatDate,
@@ -28,6 +29,7 @@ export default function DateTimeScreen() {
   const { token } = useAuth();
   const { begin, flow, huntWasEntered, save, selectedAttempt, slug } =
     useHunt();
+  const returnToLanding = useReturnToLanding(slug);
   // The navigator keeps one stack for every campaign and swaps the parameter,
   // so this screen can find itself rendering a campaign nobody opened it for —
   // the customer taps a new campaign in the directory and lands here instead of
@@ -37,8 +39,8 @@ export default function DateTimeScreen() {
   useEffect(() => {
     if (bounced.current || huntWasEntered()) return;
     bounced.current = true;
-    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
-  }, [huntWasEntered, router, slug]);
+    returnToLanding();
+  }, [huntWasEntered, returnToLanding]);
 
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -148,7 +150,7 @@ export default function DateTimeScreen() {
             <Text style={styles.infoText}>{t("datetime.revealFirst")}</Text>
             <Button
               onPress={() =>
-                router.replace({ pathname: "/campaign/[slug]", params: { slug } })
+                returnToLanding()
               }
             >
               {t("results.returnCampaign")}
@@ -188,7 +190,7 @@ export default function DateTimeScreen() {
             <Text style={styles.infoText}>{t("datetime.selectionExpired")}</Text>
             <Button
               onPress={() =>
-                router.replace({ pathname: "/campaign/[slug]", params: { slug } })
+                returnToLanding()
               }
             >
               {t("results.returnCampaign")}

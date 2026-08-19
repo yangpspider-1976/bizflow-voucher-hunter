@@ -127,6 +127,19 @@ type HuntContextValue = {
   /** Called by the landing before it navigates into a step of this campaign. */
   markHuntEntered: () => void;
   /**
+   * Records that the customer has asked for a spin.
+   *
+   * The reel spends an attempt, and the navigator mounts the reel far more
+   * often than anyone asks for one — a stale reel remounts as the stack above
+   * it unwinds, a campaign switch hands the mounted screen a new slug, a hot
+   * reload starts it over. Each of those used to buy a voucher. Granting the
+   * ask here and consuming it once is what separates "the customer tapped
+   * Let's Hunt" from "the navigator rendered the reel again".
+   */
+  requestSpin: () => void;
+  /** Takes the pending ask, if there is one. Never returns the same ask twice. */
+  consumeSpin: () => boolean;
+  /**
    * Whether a step of *this* campaign was entered from its landing.
    *
    * A ref rather than state, and read rather than rendered: the screens ask in
@@ -230,6 +243,10 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
   // navigator keeps one stack for every campaign, so a step screen can find
   // itself rendering a campaign nobody opened it for.
   const entered = useRef(false);
+  // The customer's outstanding request for a spin. A ref for the same reason as
+  // `entered`: the reel reads it in an effect that runs before this provider's,
+  // so the answer has to be correct synchronously rather than after a render.
+  const spinIntent = useRef(false);
   // Read by callbacks that must not re-create themselves on every flow change.
   const flowRef = useRef(flow);
   flowRef.current = flow;
@@ -368,6 +385,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
         // The hunt these screens describe no longer exists, so entering them
         // again has to start from the landing.
         entered.current = false;
+        // A spin asked for against the hunt that was just wiped is not owed.
+        spinIntent.current = false;
         if (isHuntStepPath(pathnameRef.current)) {
           router.replace({ pathname: "/campaign/[slug]", params: { slug } });
         }
@@ -392,6 +411,15 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
     entered.current = true;
   }, []);
   const huntWasEntered = useCallback(() => entered.current, []);
+
+  const requestSpin = useCallback(() => {
+    spinIntent.current = true;
+  }, []);
+  const consumeSpin = useCallback(() => {
+    const asked = spinIntent.current;
+    spinIntent.current = false;
+    return asked;
+  }, []);
 
   /**
    * Records the screen the customer is on, so leaving mid-hunt returns them to
@@ -498,6 +526,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       settleVoucher,
       markHuntEntered,
       huntWasEntered,
+      requestSpin,
+      consumeSpin,
       slotById,
     }),
     [
@@ -516,6 +546,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       settleVoucher,
       markHuntEntered,
       huntWasEntered,
+      requestSpin,
+      consumeSpin,
       slotById,
       slug,
     ],

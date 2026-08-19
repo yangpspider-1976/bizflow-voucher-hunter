@@ -18,6 +18,7 @@ import { Button, InlineError } from "@/components/FormControls";
 import { InfoCard, StepHeader } from "@/components/HuntUi";
 import { VoucherTicket } from "@/components/VoucherTicket";
 import { useHunt } from "@/hunt/HuntContext";
+import { useReturnToLanding } from "@/hunt/useReturnToLanding";
 import { voucherDetail } from "@/lib/format";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { colors, fonts, spacing } from "@/theme";
@@ -31,10 +32,12 @@ export default function ResultsScreen() {
     flow,
     huntWasEntered,
     refreshSnapshot,
+    requestSpin,
     save,
     selectedAttempt,
     slug,
   } = useHunt();
+  const returnToLanding = useReturnToLanding(slug);
   // The navigator keeps one stack for every campaign and swaps the parameter,
   // so this screen can find itself rendering a campaign nobody opened it for —
   // the customer taps a new campaign in the directory and lands here instead of
@@ -44,8 +47,8 @@ export default function ResultsScreen() {
   useEffect(() => {
     if (bounced.current || huntWasEntered()) return;
     bounced.current = true;
-    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
-  }, [huntWasEntered, router, slug]);
+    returnToLanding();
+  }, [huntWasEntered, returnToLanding]);
 
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState("");
@@ -84,7 +87,9 @@ export default function ResultsScreen() {
     setShareError("");
     if (flow.bonusAttempts > 0) {
       // Flagged as a fresh spin: opening the reel any other way resumes a draw
-      // that was never revealed, and this is a request for a new one.
+      // that was never revealed, and this is a request for a new one. The flag
+      // says which kind of spin; the ask below is what permits one at all.
+      requestSpin();
       router.push({
         pathname: "/campaign/[slug]/roulette",
         params: { slug, spin: "fresh" },
@@ -126,13 +131,7 @@ export default function ResultsScreen() {
         {options.length === 0 ? (
           <InfoCard>
             <Text style={styles.infoText}>{t("results.noResult")}</Text>
-            <Button
-              onPress={() =>
-                router.replace({ pathname: "/campaign/[slug]", params: { slug } })
-              }
-            >
-              {t("results.returnCampaign")}
-            </Button>
+            <Button onPress={returnToLanding}>{t("results.returnCampaign")}</Button>
           </InfoCard>
         ) : (
           <View style={styles.stack}>

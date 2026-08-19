@@ -16,6 +16,8 @@ import { HuntHeading, StepHeader } from "@/components/HuntUi";
 import { getDevPoolId } from "@/dev/devTools";
 import { useHunt } from "@/hunt/HuntContext";
 import { attemptToReveal } from "@/hunt/progress";
+import { reelAction } from "@/hunt/reelDecision";
+import { useReturnToLanding } from "@/hunt/useReturnToLanding";
 import { RouletteReel, type RouletteReelHandle } from "@/hunt/RouletteReel";
 import { subscribeToHuntResetStarting } from "@/hunt/resetSignal";
 import {
@@ -49,6 +51,7 @@ export default function RouletteScreen() {
   const freshSpin = spinIntent === "fresh";
   const {
     addAttempt,
+    consumeSpin,
     flow,
     huntWasEntered,
     loading,
@@ -57,6 +60,7 @@ export default function RouletteScreen() {
     sessionId,
     slug,
   } = useHunt();
+  const returnToLanding = useReturnToLanding(slug);
   // The navigator keeps one stack for every campaign and swaps the parameter,
   // so this screen can find itself rendering a campaign nobody opened it for —
   // the customer taps a new campaign in the directory and lands here instead of
@@ -66,8 +70,8 @@ export default function RouletteScreen() {
   useEffect(() => {
     if (bounced.current || huntWasEntered()) return;
     bounced.current = true;
-    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
-  }, [huntWasEntered, router, slug]);
+    returnToLanding();
+  }, [huntWasEntered, returnToLanding]);
 
   const reel = useRef<RouletteReelHandle>(null);
 
@@ -169,28 +173,35 @@ export default function RouletteScreen() {
     // would read `issued` as absent and spend a spin the server then refuses.
     if (loading || started.current || !token || !sessionId) return;
     const opened = flowRef.current;
+    // Taken once, and only once the snapshot has arrived — an early return above
+    // must leave the customer's ask intact for the run that finally decides.
+    const action = reelAction({
+      attempts: opened.attempts,
+      freshSpin,
+      hasIntent: consumeSpin(),
+      hasVoucher: Boolean(opened.issued),
+    });
+
     // Already holding this campaign's one final voucher: drawing again would only
     // come back as E-DUPLICATE-FINAL, so show the voucher rather than a dead reel.
-    if (opened.issued) {
+    if (action.type === "voucher") {
       started.current = true;
       router.replace({ pathname: "/campaign/[slug]/confirmation", params: { slug } });
+      return;
+    }
+    // The reel opened without anyone asking for a spin and with nothing owed to
+    // reveal. That is the navigator's doing, not the customer's, so it costs
+    // them nothing and sends them back to the campaign page.
+    if (action.type === "leave") {
+      started.current = true;
+      returnToLanding();
       return;
     }
     started.current = true;
     let active = true;
 
-    /**
-     * A draw that was made but never landed: the customer left the reel mid
-     * spin, and the attempt has been sitting on the server ever since. It is
-     * theirs and it has already been paid for, so reopening the campaign
-     * reveals it instead of buying another.
-     *
-     * Skipped for "Spin again", which is a request for a new draw and would
-     * otherwise re-show the prize they just declined to book.
-     */
-    const revealPending = freshSpin
-      ? undefined
-      : attemptToReveal(opened.attempts);
+    const revealPending =
+      action.type === "reveal" ? action.attempt : undefined;
 
     /**
      * Puts a decided attempt on the reel. The spin is never what picks the
@@ -322,8 +333,10 @@ export default function RouletteScreen() {
       drawAbort.current = null;
     };
   }, [
+    consumeSpin,
     freshSpin,
     loading,
+    returnToLanding,
     router,
     refreshSnapshot,
     runStop,
@@ -374,12 +387,7 @@ export default function RouletteScreen() {
               <HuntHeading title={t("roulette.spinUnavailable")} />
               <InlineError message={error} />
               <View style={styles.action}>
-                <Button
-                  variant="secondary"
-                  onPress={() =>
-                    router.replace({ pathname: "/campaign/[slug]", params: { slug } })
-                  }
-                >
+                <Button variant="secondary" onPress={returnToLanding}>
                   {t("results.returnCampaign")}
                 </Button>
               </View>

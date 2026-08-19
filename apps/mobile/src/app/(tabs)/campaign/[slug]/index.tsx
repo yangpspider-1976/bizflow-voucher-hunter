@@ -94,6 +94,7 @@ export default function CampaignLandingScreen() {
     markHuntEntered,
     refreshSnapshot,
     reload,
+    requestSpin,
     slug,
   } = useHunt();
   const [busy, setBusy] = useState(false);
@@ -197,9 +198,14 @@ export default function CampaignLandingScreen() {
       // check it before acting, because the navigator hands them on to whichever
       // campaign is opened next.
       markHuntEntered();
+      // The reel is the one screen that can spend an attempt, and this button is
+      // the only place a customer asks it to. Everything else that mounts the
+      // reel — a stale screen unwinding, a campaign switch, a reload — arrives
+      // without this and reveals what is held rather than buying more.
+      if (step === "roulette") requestSpin();
       router.push({ pathname: STEP_ROUTES[step], params: { slug } });
     },
-    [markHuntEntered, router, slug],
+    [markHuntEntered, requestSpin, router, slug],
   );
 
   async function startHunt() {
@@ -369,7 +375,12 @@ export default function CampaignLandingScreen() {
           {canResume ? (
             <View style={styles.progressNote}>
               <View style={styles.progressDot} />
-              <Text style={styles.progressNoteText}>{t("campaign.inProgress")}</Text>
+              <Text style={styles.progressNoteText}>
+                {/* A finished campaign still offers the button — its next step is
+                    the voucher, not a spin — so the badge has to say which of
+                    the two this is rather than calling a claimed hunt ongoing. */}
+                {flow.issued ? t("campaign.voucherClaimed") : t("campaign.inProgress")}
+              </Text>
             </View>
           ) : null}
 

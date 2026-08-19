@@ -17,6 +17,7 @@ import { Button } from "@/components/FormControls";
 import { StepHeader, SummaryList, SummaryRow } from "@/components/HuntUi";
 import { VoucherTicket } from "@/components/VoucherTicket";
 import { useHunt } from "@/hunt/HuntContext";
+import { useReturnToLanding } from "@/hunt/useReturnToLanding";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { formatDate, formatTime, localeFor, voucherStatusLabel } from "@/lib/format";
 import { colors, fonts, palette, radius, spacing } from "@/theme";
@@ -26,6 +27,7 @@ export default function ConfirmationScreen() {
   const { language, t } = useLanguage();
   const router = useRouter();
   const { campaign, flow, huntWasEntered, loading, slug } = useHunt();
+  const returnToLanding = useReturnToLanding(slug);
   const issued = flow.issued;
 
   // The navigator keeps one stack for every campaign and swaps the parameter, so
@@ -35,8 +37,8 @@ export default function ConfirmationScreen() {
   useEffect(() => {
     if (bounced.current || huntWasEntered()) return;
     bounced.current = true;
-    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
-  }, [huntWasEntered, router, slug]);
+    returnToLanding();
+  }, [huntWasEntered, returnToLanding]);
 
   // A campaign resumed straight to this screen renders before its snapshot has
   // arrived. Saying "no voucher" in that gap tells a customer who holds one
