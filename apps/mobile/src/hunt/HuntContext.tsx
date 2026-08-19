@@ -32,6 +32,7 @@ import {
 } from "@/hunt/reconcileAttempts";
 import { stepFromPathname, type HuntProgress, type HuntStep } from "@/hunt/progress";
 import {
+  clearCampaignProgress,
   clearHuntProgress,
   readHuntProgress,
   writeHuntProgress,
@@ -201,6 +202,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
   // Read by callbacks that must not re-create themselves on every flow change.
   const flowRef = useRef(flow);
   flowRef.current = flow;
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   /**
    * Folds a server snapshot into the flow, keeping the local progress it does
@@ -227,24 +230,34 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
         const keptSelection =
           Boolean(current.selectedAttemptId) &&
           selectedAttemptId === current.selectedAttemptId;
+        const issued = issuedFrom({
+          campaign: publicCampaign,
+          current: current.issued,
+          now,
+          pendingIssue: pending,
+          state,
+        });
+        // A hunt this phone started is remembered locally so a failed refresh
+        // cannot un-start it — but a refresh that *succeeds* and reports no
+        // attempts and no voucher is the server saying the hunt is gone, which
+        // is what a reset looks like from here. Without this the campaign would
+        // go on offering Continue for a hunt that no longer exists.
+        const emptied = attempts.length === 0 && issued === null;
+        if (emptied) void clearCampaignProgress(slug);
+
         return {
           ...current,
           userId: state.user.id,
           attempts,
           selectedAttemptId,
+          step: emptied ? null : current.step,
           selectedSlotId: keptSelection ? current.selectedSlotId : "",
           selectedDate: keptSelection ? current.selectedDate : "",
           bonusAttempts: state.remainingBonusAttempts,
           shareCount: state.sharesGrantedToday,
           name: current.name || state.user.name || "",
           email: current.email || state.user.email || "",
-          issued: issuedFrom({
-            campaign: publicCampaign,
-            current: current.issued,
-            now,
-            pendingIssue: pending,
-            state,
-          }),
+          issued,
         };
       });
     },
@@ -316,8 +329,14 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
         pendingIssue.current = null;
         void clearHuntProgress();
         setError(null);
+        // The stack may be standing on a step of a hunt that no longer exists —
+        // a results list, or a confirmation for a deleted voucher. Left alone it
+        // would sit there showing an empty version of itself.
+        if (stepFromPathname(pathnameRef.current, slug)) {
+          router.dismissTo({ pathname: "/campaign/[slug]", params: { slug } });
+        }
       }),
-    [],
+    [router, slug],
   );
 
   /**

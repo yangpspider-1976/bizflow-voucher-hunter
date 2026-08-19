@@ -57,3 +57,16 @@ export async function clearHuntProgress(): Promise<void> {
     // Same reasoning as above; the server state is what a reset actually clears.
   }
 }
+
+/** One campaign's resume point, dropped when the server reports it has none. */
+export async function clearCampaignProgress(slug: string): Promise<void> {
+  try {
+    const entries = await readAll();
+    if (!entries[slug]) return;
+    delete entries[slug];
+    await SecureStore.setItemAsync(PROGRESS_KEY, JSON.stringify(entries));
+  } catch {
+    // Same reasoning as the rest of this module: the server state is what
+    // decides, and a stale resume point costs a step, not the hunt.
+  }
+}
