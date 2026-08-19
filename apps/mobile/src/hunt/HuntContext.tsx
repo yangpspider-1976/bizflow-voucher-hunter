@@ -4,7 +4,7 @@ import {
   type Voucher,
   type VoucherAttempt,
 } from "@bizflow/shared";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import {
   createContext,
   type PropsWithChildren,
@@ -180,6 +180,7 @@ function issuedFrom({
 export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: string }>) {
   const { token } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
   const [campaign, setCampaign] = useState<PublicCampaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -318,6 +319,27 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       }),
     [],
   );
+
+  /**
+   * A campaign opened while another one's stack is still standing inherits its
+   * history.
+   *
+   * Expo Router keeps a single navigator for `campaign/[slug]` and swaps the
+   * param rather than mounting a new one, so the screens the last campaign
+   * pushed are still there: tapping a fresh campaign from the directory lands on
+   * the previous one's reel or results list, showing this campaign's (empty)
+   * state under the last one's heading. Keying the provider and the navigator by
+   * slug does not help — the state is the router's, not React's.
+   *
+   * Runs once per campaign, because the provider is keyed by slug.
+   */
+  useEffect(() => {
+    if (!stepFromPathname(pathname, slug)) return;
+    router.dismissTo({ pathname: "/campaign/[slug]", params: { slug } });
+    // Deliberately mount-only: a step reached later in this campaign is the
+    // customer navigating, not an inherited stack.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Records the screen the customer is on, so leaving mid-hunt returns them to

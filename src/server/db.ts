@@ -1,4 +1,10 @@
-import { createClient, type Client, type InArgs, type InStatement, type Transaction } from "@libsql/client";
+import {
+  createClient,
+  type Client,
+  type InArgs,
+  type InStatement,
+  type Transaction,
+} from "@/server/pg-driver";
 import type {
   AnalyticsEvent,
   Business,
@@ -14,7 +20,7 @@ import type {
   VoucherPool
 } from "@/types/voucher";
 
-// libSQL returns rows keyed by column name; mappers narrow them to domain types.
+// Rows come back keyed by column name; mappers narrow them to domain types.
 type Row = any;
 export type Exec = Client | Transaction;
 
@@ -24,26 +30,38 @@ export type Exec = Client | Transaction;
  * - development and tests always use DATABASE_PATH, even if a shell happens to
  *   contain remote credentials
  */
+function isPostgresUrl(url: string) {
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
 function resolveUrl() {
-  if (process.env.NODE_ENV === "production") {
-    const remoteUrl = process.env.DATABASE_URL?.trim();
-    const remoteToken = process.env.DATABASE_AUTH_TOKEN?.trim();
-    if (!remoteUrl || !remoteToken) {
+  // Tests get a database of their own, always, and never fall back to
+  // DATABASE_URL: `resetDb()` empties every table, so a misconfigured run that
+  // reached production would not fail — it would succeed, and delete everything.
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
+    const testUrl = process.env.TEST_DATABASE_URL?.trim();
+    if (!testUrl || !isPostgresUrl(testUrl)) {
       throw new Error(
-        "Production database is not configured. Set DATABASE_URL and DATABASE_AUTH_TOKEN.",
+        "Tests need TEST_DATABASE_URL set to a PostgreSQL connection string of their own.",
       );
     }
-    if (!remoteUrl.startsWith("libsql://") && !remoteUrl.startsWith("https://")) {
-      throw new Error("Production DATABASE_URL must point to Turso/libSQL.");
-    }
-    return remoteUrl;
+    return testUrl;
   }
 
-  const p = process.env.DATABASE_PATH ?? "./data/bizflow.db";
-  return `file:${p.replace(/\\/g, "/")}`;
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error("Database is not configured. Set DATABASE_URL.");
+  }
+  if (!isPostgresUrl(url)) {
+    throw new Error("DATABASE_URL must point to PostgreSQL.");
+  }
+  return url;
 }
 
 const SCHEMA = `
+-- gen_random_bytes, for the wallet secrets below. Postgres has no built-in
+-- CSPRNG-backed hex generator, and these are security tokens, not row ids.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS businesses (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -157,6 +175,9 @@ CREATE TABLE IF NOT EXISTS users (
 -- leads with campaign_id, so it cannot serve that grouping.
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
 CREATE TABLE IF NOT EXISTS attempts (
+  -- Insertion order, explicitly. Replaces SQLite's rowid, which the ledger
+  -- and metrics queries used to break ties between rows sharing a timestamp.
+  seq bigserial NOT NULL,
   id TEXT PRIMARY KEY,
   campaign_id TEXT NOT NULL,
   slot_id TEXT,
@@ -407,6 +428,9 @@ CREATE TABLE IF NOT EXISTS loyalty_daily_rewards (
 );
 CREATE INDEX IF NOT EXISTS idx_loyalty_daily_wallet ON loyalty_daily_rewards (wallet_id, reward_date);
 CREATE TABLE IF NOT EXISTS reward_vouchers (
+  -- Insertion order, explicitly. Replaces SQLite's rowid, which the ledger
+  -- and metrics queries used to break ties between rows sharing a timestamp.
+  seq bigserial NOT NULL,
   id TEXT PRIMARY KEY,
   wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
   voucher_code TEXT NOT NULL UNIQUE,
@@ -454,6 +478,9 @@ CREATE TABLE IF NOT EXISTS reward_settlements (
 -- checkout is money they owe us, so the deposit is what that exposure is drawn
 -- against when a month closes in our favour.
 CREATE TABLE IF NOT EXISTS business_deposit_entries (
+  -- Insertion order, explicitly. Replaces SQLite's rowid, which the ledger
+  -- and metrics queries used to break ties between rows sharing a timestamp.
+  seq bigserial NOT NULL,
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id),
   -- TopUp | StatementDeduction | Adjustment | Refund
@@ -501,14 +528,10 @@ let client: Client | null = null;
 let readyPromise: Promise<void> | null = null;
 
 function clientConfig() {
-  return {
-    url: resolveUrl(),
-    authToken:
-      process.env.NODE_ENV === "production"
-        ? process.env.DATABASE_AUTH_TOKEN
-        : undefined,
-    intMode: "number" as const,
-  };
+  // DATABASE_SCHEMA is optional everywhere and unset in production. The schema
+  // migration tests use it to give each scenario a database of its own without
+  // needing a database of its own.
+  return { url: resolveUrl(), schema: process.env.DATABASE_SCHEMA?.trim() };
 }
 
 function rawClient(): Client {
@@ -619,7 +642,7 @@ async function init() {
       await seed(c);
       await ensureDemoCampaignAvailability(c);
     }
-    await c.execute({ sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", args: [SCHEMA_VERSION] });
+    await c.execute({ sql: "INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", args: [SCHEMA_VERSION] });
     return;
   }
 
@@ -662,8 +685,11 @@ async function dropStaffPinColumn(c: Client) {
 }
 
 async function hasColumn(c: Client, table: string, column: string) {
-  const result = await c.execute(`PRAGMA table_info(${table})`);
-  return result.rows.some((row) => String((row as Row).name) === column);
+  const result = await c.execute({
+    sql: "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
+    args: [table],
+  });
+  return result.rows.some((row) => String((row as Row).column_name) === column);
 }
 
 async function ensureRewardsSchema(c: Client) {
@@ -733,7 +759,7 @@ async function ensureRewardsSchema(c: Client) {
 
   await c.execute(
     `UPDATE reward_wallets
-     SET wallet_secret = 'rwsecret_' || lower(hex(randomblob(18)))
+     SET wallet_secret = 'rwsecret_' || encode(gen_random_bytes(18), 'hex')
      WHERE wallet_secret IS NULL OR wallet_secret = ''`
   );
   await c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reward_wallets_secret ON reward_wallets (wallet_secret)");
@@ -882,7 +908,7 @@ async function runPartnerBucketBackfill(c: Client, force = false) {
   }
 
   await c.execute({
-    sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+    sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
     args: [LP_BUCKET_BACKFILL_KEY, "1"],
   });
   return { wallets, movedCentavos };
@@ -954,7 +980,7 @@ async function backfillOneWallet(c: Client, walletId: string) {
         tx,
         `INSERT OR IGNORE INTO reward_business_balances
          (id, wallet_id, business_id, balance_centavos, lifetime_earned_centavos, lifetime_transferred_centavos, created_at, updated_at)
-         VALUES ('rbb_' || lower(hex(randomblob(8))), ?, ?, 0, 0, 0, ?, ?)`,
+         VALUES ('rbb_' || encode(gen_random_bytes(8), 'hex'), ?, ?, 0, 0, 0, ?, ?)`,
         [walletId, businessId, now, now],
       );
       // lifetime_earned_centavos is what the next run measures the remaining
@@ -974,14 +1000,14 @@ async function backfillOneWallet(c: Client, walletId: string) {
         tx,
         `INSERT INTO reward_ledger_entries
          (id, wallet_id, type, delta_centavos, balance_after_centavos, source_type, source_id, metadata, created_at)
-         VALUES ('rled_' || lower(hex(randomblob(8))), ?, 'backfill_out', ?, ?, 'partner_bucket_backfill', ?, ?, ?)`,
+         VALUES ('rled_' || encode(gen_random_bytes(8), 'hex'), ?, 'backfill_out', ?, ?, 'partner_bucket_backfill', ?, ?, ?)`,
         [walletId, -share, globalAfter, walletId, metadata, now],
       );
       await run(
         tx,
         `INSERT INTO reward_ledger_entries
          (id, wallet_id, type, delta_centavos, balance_after_centavos, source_type, source_id, business_id, metadata, created_at)
-         VALUES ('rled_' || lower(hex(randomblob(8))), ?, 'backfill_in', ?, ?, 'partner_bucket_backfill', ?, ?, ?, ?)`,
+         VALUES ('rled_' || encode(gen_random_bytes(8), 'hex'), ?, 'backfill_in', ?, ?, 'partner_bucket_backfill', ?, ?, ?, ?)`,
         [walletId, share, bucketAfter, walletId, businessId, metadata, now],
       );
     }
@@ -1935,7 +1961,7 @@ export async function wipeDb() {
   );
   // Survives restarts, so init() does not helpfully reseed what was just wiped.
   await c.execute({
-    sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+    sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
     args: [SEED_SUPPRESSED_KEY, "1"]
   });
   // Every customer row is gone, so every customer cookie has to stop working.
@@ -1965,7 +1991,7 @@ async function bumpCustomerAuthEpoch(c: Client) {
   ]);
   const next = String(Number(row?.value ?? "1") + 1);
   await c.execute({
-    sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+    sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
     args: [CUSTOMER_AUTH_EPOCH_KEY, next]
   });
 }

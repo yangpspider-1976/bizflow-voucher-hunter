@@ -129,7 +129,7 @@ export async function listCustomers(
      LEFT JOIN vouchers v ON v.user_id = u.id
      LEFT JOIN reward_wallets w ON w.phone = p.phone
      WHERE 1 = 1${scope.clause}${searchClause}
-     GROUP BY p.phone
+     GROUP BY p.phone, p.last_activity_at, p.first_seen_at, w.balance_centavos
      ORDER BY p.last_activity_at DESC`,
     [...scope.args, ...searchArgs, ...scope.args, ...searchArgs],
   );
@@ -176,7 +176,7 @@ export async function getCustomer(
      LEFT JOIN vouchers v ON v.user_id = u.id
      LEFT JOIN reward_wallets w ON w.phone = u.phone
      WHERE u.phone = ?${scope.clause}
-     GROUP BY u.phone`,
+     GROUP BY u.phone, w.balance_centavos`,
     [phone, ...scope.args],
   );
 
@@ -213,7 +213,7 @@ export async function getCustomer(
      LEFT JOIN attempts a ON a.user_id = u.id
      LEFT JOIN vouchers v ON v.user_id = u.id
      WHERE u.phone = ?${scope.clause}
-     GROUP BY u.campaign_id
+     GROUP BY u.campaign_id, c.title, c.slug, b.name, u.created_at
      ORDER BY joined_at DESC`,
     [phone, ...scope.args],
   );

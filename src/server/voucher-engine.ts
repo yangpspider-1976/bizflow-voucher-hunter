@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Client, Transaction } from "@libsql/client";
+import type { Client, Transaction } from "@/server/pg-driver";
 import { generateQrToken, generateVoucherCode } from "@/server/codes";
 import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
@@ -1536,13 +1536,13 @@ export async function dashboardMetrics(campaignId: string) {
         args: [campaign.id],
       },
       {
-        // MIN(rowid) preserves the order benefits were first drawn in, which is
+        // MIN(seq) preserves the order benefits were first drawn in, which is
         // the order this list has always rendered in.
         sql: `SELECT display_label,
                      COUNT(*) AS generated,
                      SUM(CASE WHEN status = 'Selected' THEN 1 ELSE 0 END) AS selected
               FROM attempts WHERE campaign_id = ?
-              GROUP BY display_label ORDER BY MIN(rowid)`,
+              GROUP BY display_label ORDER BY MIN(seq)`,
         args: [campaign.id],
       },
       {
