@@ -30,7 +30,12 @@ import {
   reconcileSnapshotAttempts,
   PENDING_ATTEMPT_GRACE_MS,
 } from "@/hunt/reconcileAttempts";
-import { stepFromPathname, type HuntProgress, type HuntStep } from "@/hunt/progress";
+import {
+  isHuntStepPath,
+  stepFromPathname,
+  type HuntProgress,
+  type HuntStep,
+} from "@/hunt/progress";
 import {
   clearCampaignProgress,
   clearHuntProgress,
@@ -332,8 +337,12 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
         // The stack may be standing on a step of a hunt that no longer exists —
         // a results list, or a confirmation for a deleted voucher. Left alone it
         // would sit there showing an empty version of itself.
-        if (stepFromPathname(pathnameRef.current, slug)) {
-          router.dismissTo({ pathname: "/campaign/[slug]", params: { slug } });
+        if (isHuntStepPath(pathnameRef.current)) {
+          try {
+            router.dismissAll();
+          } catch {
+            // Nothing to dismiss: the landing is already showing.
+          }
         }
       }),
     [router, slug],
@@ -353,8 +362,18 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
    * Runs once per campaign, because the provider is keyed by slug.
    */
   useEffect(() => {
-    if (!stepFromPathname(pathname, slug)) return;
-    router.dismissTo({ pathname: "/campaign/[slug]", params: { slug } });
+    // Slug-agnostic, and popping rather than aiming: at mount the path can still
+    // name the previous campaign, and its index entry in the history carries
+    // that campaign's parameter, so an href-targeted dismiss matches nothing.
+    // Popping to the root lands on this campaign's own landing, because the
+    // parameter has changed underneath it.
+    if (!isHuntStepPath(pathnameRef.current)) return;
+    try {
+      router.dismissAll();
+    } catch {
+      // Older navigators refuse when there is nothing to dismiss; the landing
+      // is then already what is showing.
+    }
     // Deliberately mount-only: a step reached later in this campaign is the
     // customer navigating, not an inherited stack.
     // eslint-disable-next-line react-hooks/exhaustive-deps

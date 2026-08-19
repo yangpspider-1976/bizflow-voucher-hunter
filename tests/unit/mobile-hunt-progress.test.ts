@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   attemptToReveal,
+  isHuntStepPath,
   parseProgressMap,
   pruneProgress,
   resumeStep,
@@ -190,5 +191,36 @@ describe("the draw a resumed reel owes", () => {
     ).toBe("att_1");
     expect(attemptToReveal([attempt("att_1", "Released")])).toBeUndefined();
     expect(attemptToReveal([])).toBeUndefined();
+  });
+});
+
+/**
+ * The regression these exist for: the campaign-switch reset asked "is this path
+ * a step of *this* campaign", and at the moment it runs the path still names the
+ * campaign being left. It answered no exactly when it needed to answer yes, so
+ * opening a second campaign kept showing the first one's reel.
+ */
+describe("recognising a hunt step path", () => {
+  it("sees a step whichever campaign the path names", () => {
+    expect(isHuntStepPath("/campaign/campaign-one/roulette")).toBe(true);
+    expect(isHuntStepPath("/campaign/campaign-two/results")).toBe(true);
+    expect(isHuntStepPath("/campaign/july-dinner/confirmation")).toBe(true);
+  });
+
+  it("does not treat a campaign landing as a step", () => {
+    // The landing is where a campaign is supposed to open. Popping there would
+    // be a no-op at best and a loop at worst.
+    expect(isHuntStepPath("/campaign/july-dinner")).toBe(false);
+  });
+
+  it("ignores everything outside a campaign", () => {
+    expect(isHuntStepPath("/")).toBe(false);
+    expect(isHuntStepPath("/more")).toBe(false);
+    expect(isHuntStepPath("/vouchers")).toBe(false);
+    expect(isHuntStepPath("/shop/checkout")).toBe(false);
+  });
+
+  it("does not treat an unknown campaign sub-path as a step", () => {
+    expect(isHuntStepPath("/campaign/july-dinner/venue")).toBe(false);
   });
 });

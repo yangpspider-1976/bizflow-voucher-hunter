@@ -83,6 +83,20 @@ export function stepFromPathname(pathname: string, slug: string): HuntStep | nul
   return isStep(step) ? step : null;
 }
 
+/**
+ * Whether a path is one of the hunt steps, for any campaign.
+ *
+ * Deliberately blind to which campaign it names. When a second campaign is
+ * opened while the first one's stack is still standing, the provider for the
+ * new campaign mounts before the router has finished swapping the parameter, so
+ * the path still reads as the previous campaign's. Asking "is this the current
+ * campaign's step" answers no at exactly the moment the answer needs to be yes.
+ */
+export function isHuntStepPath(pathname: string): boolean {
+  const [, root, campaign, step] = pathname.split("/");
+  return root === "campaign" && Boolean(campaign) && isStep(step);
+}
+
 /** Tolerant read: a corrupt or half-written blob is no progress, never a throw. */
 export function parseProgressMap(raw: string | null): HuntProgressMap {
   if (!raw) return {};
