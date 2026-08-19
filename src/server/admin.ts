@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { InArgs } from "@libsql/client";
+import type { InArgs } from "@/server/pg-driver";
 import { benefitValueProblem, RARITY_WEIGHTS, type VoucherRarity } from "@bizflow/shared";
 import { AppError } from "@/server/errors";
 import {

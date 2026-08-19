@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Client, Transaction } from "@libsql/client";
+import type { Client, Transaction } from "@/server/pg-driver";
 import { generateVoucherCode } from "@/server/codes";
 import { all, batchAll, getDb, one, run, withTx } from "@/server/db";
 import { assertDevToolsEnabled, devToolsEnabled } from "@/server/dev-tools";
@@ -1720,7 +1720,7 @@ export async function listBusinessDepositEntries(businessId: string, limit = 50)
     // random-hex id would then order the ledger arbitrarily.
     `SELECT * FROM business_deposit_entries
      WHERE business_id = ?
-     ORDER BY created_at DESC, rowid DESC
+     ORDER BY created_at DESC, seq DESC
      LIMIT ?`,
     [businessId, limit],
   );
@@ -2658,7 +2658,7 @@ export async function listWalletPurchases(input: { phone: string }) {
        LIMIT 1
      )
      WHERE v.wallet_id = ?
-     ORDER BY v.issued_at DESC, v.rowid DESC`,
+     ORDER BY v.issued_at DESC, v.seq DESC`,
     [wallet.id],
   );
 

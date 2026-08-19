@@ -25,7 +25,7 @@ export async function isDevLiveSmsEnabled(): Promise<boolean> {
 
 export async function setDevLiveSmsEnabled(enabled: boolean): Promise<void> {
   const db = await getDb();
-  await run(db, "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [
+  await run(db, "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [
     LIVE_SMS_KEY,
     enabled ? "true" : "false",
   ]);

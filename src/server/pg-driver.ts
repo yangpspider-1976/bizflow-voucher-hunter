@@ -19,7 +19,8 @@ types.setTypeParser(types.builtins.INT8, (value) => Number(value));
 /** numeric likewise; every numeric column here is money in centavos or a count. */
 types.setTypeParser(types.builtins.NUMERIC, (value) => Number(value));
 
-export type InArgs = unknown[];
+/** Positional (`?` + array) or named (`@name` + object), as libSQL accepted. */
+export type InArgs = unknown[] | Record<string, unknown>;
 export type InStatement = string | { sql: string; args?: InArgs };
 export type Row = Record<string, unknown>;
 
@@ -76,6 +77,95 @@ export function toPositional(sql: string): string {
   return out;
 }
 
+/**
+ * Translates the two SQLite upsert forms the app uses.
+ *
+ * `INSERT OR IGNORE` appears 19 times — seeding, backfills, and anything that
+ * must not double-apply on a retry. Postgres spells it as a conflict clause at
+ * the end of the statement rather than a verb at the front, so the rewrite is
+ * mechanical and stays here rather than being copied into 19 call sites.
+ *
+ * `INSERT OR REPLACE` is deliberately NOT translated here: it needs a conflict
+ * target, which depends on the table, and guessing one silently upserts against
+ * the wrong key. All five uses are on `meta(key, value)` and are written out in
+ * full at their call sites.
+ */
+export function toPostgresDialect(sql: string): string {
+  const prefix = "INSERT OR IGNORE INTO";
+  const lead = sql.length - sql.trimStart().length;
+  if (sql.slice(lead, lead + prefix.length).toUpperCase() !== prefix) return sql;
+
+  const rewritten =
+    sql.slice(0, lead) + "INSERT INTO" + sql.slice(lead + prefix.length);
+  // A trailing semicolon or whitespace would strand the clause after the end
+  // of the statement.
+  const trimmed = rewritten.trimEnd();
+  const body = trimmed.endsWith(";") ? trimmed.slice(0, -1).trimEnd() : trimmed;
+  return body + " ON CONFLICT DO NOTHING";
+}
+
+/**
+ * Binds `@name` parameters against an object, the other half of libSQL's
+ * argument API and the form used by every multi-column insert in the app.
+ *
+ * Quote-aware for the same reason as `toPositional`, and more urgently: SQL
+ * literals here contain email addresses, so a blind scan for `@` would rewrite
+ * `'admin@bizflow.local'` into a placeholder and bind a password hash into it.
+ *
+ * A name used twice reuses its placeholder rather than duplicating the value —
+ * Postgres allows `$1` to appear as often as it likes.
+ */
+export function toNamed(
+  sql: string,
+  args: Record<string, unknown>,
+): { text: string; values: unknown[] } {
+  const order: string[] = [];
+  let out = "";
+  let quote: string | null = null;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i];
+
+    if (quote) {
+      out += char;
+      if (char === quote) {
+        if (sql[i + 1] === quote) {
+          out += sql[i + 1];
+          i += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      out += char;
+      continue;
+    }
+
+    if (char === "@") {
+      const rest = sql.slice(i + 1);
+      const name = rest.match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+      if (name && Object.prototype.hasOwnProperty.call(args, name)) {
+        let index = order.indexOf(name);
+        if (index === -1) {
+          order.push(name);
+          index = order.length - 1;
+        }
+        out += "$" + (index + 1);
+        i += name.length;
+        continue;
+      }
+    }
+
+    out += char;
+  }
+
+  return { text: out, values: order.map((name) => args[name]) };
+}
+
 function split(statement: InStatement): { sql: string; args: InArgs } {
   return typeof statement === "string"
     ? { sql: statement, args: [] }
@@ -87,7 +177,11 @@ async function runOn(
   statement: InStatement,
 ): Promise<ResultSet> {
   const { sql, args } = split(statement);
-  const result = await runner.query(toPositional(sql), args as unknown[]);
+  const dialect = toPostgresDialect(sql);
+  const bound = Array.isArray(args)
+    ? { text: toPositional(dialect), values: args }
+    : toNamed(dialect, args);
+  const result = await runner.query(bound.text, bound.values);
   return {
     rows: (result.rows ?? []) as Row[],
     // Postgres reports null for statements that affect nothing measurable.
