@@ -228,15 +228,13 @@ export default function CampaignLandingScreen() {
       if (!started) {
         throw new Error(t("campaign.sessionNotReady"));
       }
-      goToStep(
-        resumeStep({
-          attempts: started.attempts,
-          hasVoucher: Boolean(started.voucher),
-          selectedAttemptId: flow.selectedAttemptId,
-          selectedSlotId: flow.selectedSlotId,
-          step: flow.step,
-        }),
-      );
+      // This button said "Let's Hunt!", so the customer asked for a spin and a
+      // spin is what they get. The server can still turn out to hold a candidate
+      // they never saw revealed — the reel drew it on a previous visit and they
+      // left before stopping it — and sending them to the results list then
+      // hands over a voucher with no reel at all. The reel reveals it instead.
+      // Only a voucher already issued outranks that.
+      goToStep(started.voucher ? "confirmation" : "roulette");
     } catch (caught) {
       setActionError(
         caught instanceof Error ? caught.message : t("campaign.startError"),
