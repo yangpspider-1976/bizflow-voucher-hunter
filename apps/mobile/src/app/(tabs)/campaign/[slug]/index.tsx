@@ -180,8 +180,14 @@ export default function CampaignLandingScreen() {
   );
 
   const hasActiveAttempt = flow.attempts.some(isSelectableAttempt);
+  // `flow.step` is what keeps this steady. The other three depend on the
+  // snapshot, so a refresh that comes back empty — a slow read, a dropped
+  // request — flipped the button from Continue back to Let's Hunt under the
+  // customer, offering a fresh hunt for one they had already started. A hunt
+  // this phone began on this campaign is a fact about the phone, and stays true
+  // whether or not the server answers.
   const canResume = Boolean(
-    flow.issued || flow.selectedSlotId || hasActiveAttempt,
+    flow.issued || flow.selectedSlotId || hasActiveAttempt || flow.step,
   );
 
   const goToStep = useCallback(
