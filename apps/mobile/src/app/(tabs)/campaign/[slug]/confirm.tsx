@@ -1,6 +1,6 @@
 import { toDisplayPhone } from "@bizflow/shared";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -28,6 +28,7 @@ export default function ConfirmScreen() {
   const {
     campaign,
     flow,
+    huntWasEntered,
     save,
     selectedAttempt,
     sessionId,
@@ -35,6 +36,18 @@ export default function ConfirmScreen() {
     slotById,
     slug,
   } = useHunt();
+  // The navigator keeps one stack for every campaign and swaps the parameter,
+  // so this screen can find itself rendering a campaign nobody opened it for —
+  // the customer taps a new campaign in the directory and lands here instead of
+  // on its page. Checked in an effect that runs before the provider's own, which
+  // is why the answer comes from a ref rather than from state.
+  const bounced = useRef(false);
+  useEffect(() => {
+    if (bounced.current || huntWasEntered()) return;
+    bounced.current = true;
+    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
+  }, [huntWasEntered, router, slug]);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 

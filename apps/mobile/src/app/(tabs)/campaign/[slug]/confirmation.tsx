@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -24,8 +25,18 @@ import { colors, fonts, palette, radius, spacing } from "@/theme";
 export default function ConfirmationScreen() {
   const { language, t } = useLanguage();
   const router = useRouter();
-  const { campaign, flow, loading } = useHunt();
+  const { campaign, flow, huntWasEntered, loading, slug } = useHunt();
   const issued = flow.issued;
+
+  // The navigator keeps one stack for every campaign and swaps the parameter, so
+  // this screen can find itself rendering a campaign nobody opened it for. Left
+  // alone it would tell that campaign's visitor they have no voucher.
+  const bounced = useRef(false);
+  useEffect(() => {
+    if (bounced.current || huntWasEntered()) return;
+    bounced.current = true;
+    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
+  }, [huntWasEntered, router, slug]);
 
   // A campaign resumed straight to this screen renders before its snapshot has
   // arrived. Saying "no voucher" in that gap tells a customer who holds one

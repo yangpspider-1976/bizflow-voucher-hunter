@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AppState,
   Pressable,
@@ -29,11 +29,24 @@ export default function ResultsScreen() {
   const {
     campaign,
     flow,
+    huntWasEntered,
     refreshSnapshot,
     save,
     selectedAttempt,
     slug,
   } = useHunt();
+  // The navigator keeps one stack for every campaign and swaps the parameter,
+  // so this screen can find itself rendering a campaign nobody opened it for —
+  // the customer taps a new campaign in the directory and lands here instead of
+  // on its page. Checked in an effect that runs before the provider's own, which
+  // is why the answer comes from a ref rather than from state.
+  const bounced = useRef(false);
+  useEffect(() => {
+    if (bounced.current || huntWasEntered()) return;
+    bounced.current = true;
+    router.replace({ pathname: "/campaign/[slug]", params: { slug } });
+  }, [huntWasEntered, router, slug]);
+
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState("");
 

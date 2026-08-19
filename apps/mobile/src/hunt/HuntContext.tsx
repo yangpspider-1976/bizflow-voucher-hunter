@@ -113,6 +113,16 @@ type HuntContextValue = {
   refreshSnapshot: () => Promise<HuntState | null>;
   /** Records the voucher this app has just issued, and holds it against lag. */
   settleVoucher: (issued: IssuedPayload) => void;
+  /** Called by the landing before it navigates into a step of this campaign. */
+  markHuntEntered: () => void;
+  /**
+   * Whether a step of *this* campaign was entered from its landing.
+   *
+   * A ref rather than state, and read rather than rendered: the screens ask in
+   * an effect that runs before this provider's own effects, so the answer has to
+   * be correct synchronously.
+   */
+  huntWasEntered: () => boolean;
   selectedAttempt: VoucherAttempt | undefined;
   slotById: (id: string) => PublicSlot | undefined;
 };
@@ -204,6 +214,10 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
   const pendingAttempts = useRef(new Map<string, number>());
   // The voucher this app issued itself, for the same reason and the same window.
   const pendingIssue = useRef<{ voucherId: string; at: number } | null>(null);
+  // False for a freshly mounted campaign, which is the whole point: the
+  // navigator keeps one stack for every campaign, so a step screen can find
+  // itself rendering a campaign nobody opened it for.
+  const entered = useRef(false);
   // Read by callbacks that must not re-create themselves on every flow change.
   const flowRef = useRef(flow);
   flowRef.current = flow;
@@ -334,15 +348,11 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
         pendingIssue.current = null;
         void clearHuntProgress();
         setError(null);
-        // The stack may be standing on a step of a hunt that no longer exists —
-        // a results list, or a confirmation for a deleted voucher. Left alone it
-        // would sit there showing an empty version of itself.
+        // The hunt these screens describe no longer exists, so entering them
+        // again has to start from the landing.
+        entered.current = false;
         if (isHuntStepPath(pathnameRef.current)) {
-          try {
-            router.dismissAll();
-          } catch {
-            // Nothing to dismiss: the landing is already showing.
-          }
+          router.replace({ pathname: "/campaign/[slug]", params: { slug } });
         }
       }),
     [router, slug],
@@ -361,23 +371,10 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
    *
    * Runs once per campaign, because the provider is keyed by slug.
    */
-  useEffect(() => {
-    // Slug-agnostic, and popping rather than aiming: at mount the path can still
-    // name the previous campaign, and its index entry in the history carries
-    // that campaign's parameter, so an href-targeted dismiss matches nothing.
-    // Popping to the root lands on this campaign's own landing, because the
-    // parameter has changed underneath it.
-    if (!isHuntStepPath(pathnameRef.current)) return;
-    try {
-      router.dismissAll();
-    } catch {
-      // Older navigators refuse when there is nothing to dismiss; the landing
-      // is then already what is showing.
-    }
-    // Deliberately mount-only: a step reached later in this campaign is the
-    // customer navigating, not an inherited stack.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const markHuntEntered = useCallback(() => {
+    entered.current = true;
   }, []);
+  const huntWasEntered = useCallback(() => entered.current, []);
 
   /**
    * Records the screen the customer is on, so leaving mid-hunt returns them to
@@ -481,6 +478,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       refreshSnapshot,
       selectedAttempt,
       settleVoucher,
+      markHuntEntered,
+      huntWasEntered,
       slotById,
     }),
     [
@@ -496,6 +495,8 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
       selectedAttempt,
       sessionId,
       settleVoucher,
+      markHuntEntered,
+      huntWasEntered,
       slotById,
       slug,
     ],

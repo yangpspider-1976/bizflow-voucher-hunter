@@ -91,6 +91,7 @@ export default function CampaignLandingScreen() {
     error,
     flow,
     loading,
+    markHuntEntered,
     refreshSnapshot,
     reload,
     slug,
@@ -192,9 +193,13 @@ export default function CampaignLandingScreen() {
 
   const goToStep = useCallback(
     (step: HuntStep) => {
+      // Stamps this campaign as entered from its own landing. The step screens
+      // check it before acting, because the navigator hands them on to whichever
+      // campaign is opened next.
+      markHuntEntered();
       router.push({ pathname: STEP_ROUTES[step], params: { slug } });
     },
-    [router, slug],
+    [markHuntEntered, router, slug],
   );
 
   async function startHunt() {
