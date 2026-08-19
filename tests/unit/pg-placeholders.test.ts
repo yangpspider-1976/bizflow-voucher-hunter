@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toNamed, toPositional, toPostgresDialect } from "@/server/pg-driver";
+import { toNamed, toPositional, toPostgresDialect } from "@/server/pg-sql";
 
 /**
  * SQLite takes `?`; Postgres takes `$1`. Every one of the app's ~300 statements
@@ -114,5 +114,43 @@ describe("named parameter binding", () => {
       "SELECT * FROM admin_users WHERE email = 'admin@bizflow.local' AND id = $1",
     );
     expect(values).toEqual(["a1"]);
+  });
+});
+
+/**
+ * Comments are the third off-limits region, and the one that actually shipped a
+ * bug: a `--` line containing an apostrophe opened a string that never closed,
+ * so every `?` after it stopped being rewritten and the statement reached
+ * Postgres with `LIMIT ?` still in it. The comment that did it was one written
+ * during this migration, which is the point — prose is not reviewed as code.
+ */
+describe("comments are not code", () => {
+  it("survives an apostrophe in a line comment", () => {
+    const sql = [
+      "SELECT * FROM t",
+      "-- matched against the branch's integer",
+      "WHERE id = ? LIMIT ?",
+    ].join("\n");
+    const out = toPositional(sql);
+    expect(out).toContain("WHERE id = $1 LIMIT $2");
+  });
+
+  it("does not renumber a placeholder that only appears in a comment", () => {
+    const sql = "SELECT * FROM t -- is this a ? placeholder\nWHERE id = ?";
+    expect(toPositional(sql)).toBe(
+      "SELECT * FROM t -- is this a ? placeholder\nWHERE id = $1",
+    );
+  });
+
+  it("skips block comments too", () => {
+    const sql = "SELECT /* it's fine, ? */ a FROM t WHERE b = ?";
+    expect(toPositional(sql)).toBe("SELECT /* it's fine, ? */ a FROM t WHERE b = $1");
+  });
+
+  it("leaves an @name inside a comment alone", () => {
+    const sql = "-- see @id below\nSELECT * FROM t WHERE id = @id";
+    const { text, values } = toNamed(sql, { id: "x" });
+    expect(text).toBe("-- see @id below\nSELECT * FROM t WHERE id = $1");
+    expect(values).toEqual(["x"]);
   });
 });

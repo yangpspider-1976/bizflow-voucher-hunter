@@ -101,9 +101,12 @@ const UNION_SQL = `
     v.display_label AS detail,
     rl.note AS note,
     CASE WHEN rl.purchase_amount IS NULL THEN NULL ELSE rl.purchase_amount * 100 END AS purchase_centavos,
-    NULL AS loyalty_delta_centavos,
-    NULL AS service_fee_centavos,
-    NULL AS settlement_centavos,
+    -- Typed, not bare: Postgres unions these pairwise, and an untyped NULL
+    -- here meets an untyped NULL in the next branch, resolves the pair to text,
+    -- and then cannot be matched to the third branch's integer.
+    NULL::bigint AS loyalty_delta_centavos,
+    NULL::bigint AS service_fee_centavos,
+    NULL::bigint AS settlement_centavos,
     rl.staff_name AS staff_name,
     'Redeemed' AS status,
     0 AS linked_to_voucher
@@ -212,14 +215,20 @@ function whereFor(
   }
 
   // Dates are read as Manila days, which is how a cashier means them. The
-  // stored timestamps are UTC, so a bare string compare would put a 7am sale on
-  // the previous day for anyone reading this in Manila.
+  // stored timestamps are UTC ISO strings, so a bare string compare would put a
+  // 7am sale on the previous day for anyone reading this in Manila.
+  //
+  // Named zone rather than the '+8 hours' this used to add by hand: the two
+  // agree today because the Philippines has no daylight saving, and the named
+  // one keeps agreeing if that ever stops being true.
+  const manilaDay =
+    "(created_at::timestamptz AT TIME ZONE 'Asia/Manila')::date";
   if (filters.from) {
-    clauses.push("date(created_at, '+8 hours') >= ?");
+    clauses.push(`${manilaDay} >= ?::date`);
     args.push(filters.from);
   }
   if (filters.to) {
-    clauses.push("date(created_at, '+8 hours') <= ?");
+    clauses.push(`${manilaDay} <= ?::date`);
     args.push(filters.to);
   }
 
@@ -284,7 +293,7 @@ export async function listTransactions(
   // One row past the page, so "is there a next page" costs no second count.
   const rows = await all(
     db,
-    `SELECT * FROM (${UNION_SQL}) ${where.clause}
+    `SELECT * FROM (${UNION_SQL}) AS t ${where.clause}
      ORDER BY created_at DESC, id DESC
      LIMIT ? OFFSET ?`,
     [...where.args, TRANSACTIONS_PAGE_SIZE + 1, offset],
@@ -305,7 +314,7 @@ export async function listTransactions(
        COALESCE(-SUM(CASE WHEN loyalty_delta_centavos < 0 THEN loyalty_delta_centavos END), 0) AS lp_spent_centavos,
        COALESCE(SUM(service_fee_centavos), 0) AS service_fee_centavos,
        COALESCE(SUM(settlement_centavos), 0) AS settlement_centavos
-     FROM (${UNION_SQL}) ${where.clause}`,
+     FROM (${UNION_SQL}) AS t ${where.clause}`,
     where.args,
   );
   const totals = totalsRow[0] ?? {};
@@ -335,7 +344,7 @@ export async function listTransactionsForExport(
   const where = whereFor(session, filters);
   const rows = await all(
     db,
-    `SELECT * FROM (${UNION_SQL}) ${where.clause}
+    `SELECT * FROM (${UNION_SQL}) AS t ${where.clause}
      ORDER BY created_at DESC, id DESC
      LIMIT ?`,
     [...where.args, EXPORT_LIMIT],
