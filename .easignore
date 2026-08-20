@@ -1,0 +1,67 @@
+# What NOT to upload to EAS Build.
+#
+# Without this file EAS falls back to .gitignore — and that fallback reads the
+# root file only, not nested ones. `apps/mobile/.gitignore` ignores `/android`,
+# so git never showed the local Gradle output there, but every build shipped it:
+# 3.9GB on disk, a 1.2GB archive, and an upload this connection reset partway
+# through every time. The native sources are a few hundred KB; the rest is
+# output the build server regenerates.
+#
+# This file REPLACES .gitignore for uploads, so everything that one excludes has
+# to be repeated here. Keep the two in step.
+
+# Dependencies — installed on the build server.
+node_modules
+
+# Android build output. The project itself (build.gradle, app/src, the wrapper)
+# is deliberately kept: it is a real input, and dropping the whole directory
+# would switch the build from using this native project to prebuilding a fresh
+# one from app.config.js.
+apps/mobile/android/app/build/
+apps/mobile/android/app/.cxx/
+apps/mobile/android/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/.kotlin/
+
+# iOS equivalents, for when that platform is built from here too.
+apps/mobile/ios/build/
+apps/mobile/ios/Pods/
+
+# Expo, Next.js and tooling caches.
+.expo
+apps/mobile/.expo
+.next
+.next-dev
+.turbo
+dist
+tsconfig.tsbuildinfo
+
+# Test and report output.
+coverage
+playwright-report
+test-results
+*.log
+
+# Local database files.
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Downloaded EAS artifacts — the reason .gitignore mentions the upload at all.
+builds/
+
+# Deployment and secrets. Build-time values come from eas.json and EAS
+# environment variables, never from a file in the archive.
+.vercel
+.env
+.env.*
+!.env.example
+
+# Editor and OS noise.
+.idea/
+.DS_Store
+
+# Claude Code agent tooling.
+.agents/
+.claude/
+skills-lock.json
