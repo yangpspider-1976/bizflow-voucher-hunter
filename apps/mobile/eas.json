@@ -40,12 +40,15 @@
     // emits the same code and env as an .apk for device testing and manual
     // hand-off.
     //
-    // autoIncrement is off on purpose: "production" already owns the counter, so
-    // inheriting it would bump the remote versionCode and leave the APK a build
-    // number ahead of the .aab it is meant to mirror.
+    // It takes a versionCode of its own rather than reusing the one "production"
+    // last used. Pinning the two together was the original intent — the APK as a
+    // mirror of the .aab — but a tester APK built from newer code while the store
+    // build sits unchanged then carries the number of a release it no longer
+    // matches, and a device already holding that number is not offered it as an
+    // update. Numbers are cheap; knowing which build a tester is on is not.
     "production-apk": {
       "extends": "production",
-      "autoIncrement": false,
+      "autoIncrement": true,
       "distribution": "internal",
       "android": {
         "buildType": "apk"
