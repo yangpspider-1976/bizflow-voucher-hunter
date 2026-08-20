@@ -23,6 +23,13 @@ node_modules
 apps/mobile/android
 apps/mobile/ios
 
+# The web app's public assets and the repo's documentation. Both are tracked,
+# and neither is an input to an Android build — the mobile app ships its own
+# artwork under apps/mobile/assets. Together they were 35MB of an 87MB upload,
+# on a connection that resets partway through one this size.
+public
+docs
+
 # Expo, Next.js and tooling caches.
 .expo
 apps/mobile/.expo
