@@ -24,3 +24,9 @@ builds/
 
 # JetBrains IDE workspace settings.
 .idea/
+
+# Claude Code agent tooling: skills, scaffolding and their lockfile. Local
+# working files rather than app or server code, and EAS refuses a dirty tree.
+.agents/
+.claude/skills/
+skills-lock.json
