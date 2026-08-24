@@ -8,6 +8,30 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+
+    # The suite talks to a real PostgreSQL, and has since the database moved off
+    # SQLite: `resolveUrl()` refuses to run tests against anything else, and
+    # refuses to fall back to DATABASE_URL so that a run can never be pointed at
+    # production by an inherited variable. Without this service every DB-backed
+    # test errors in setup — which is exactly what happened from the migration
+    # merge onward, and why `npm run test` had been failing on every push.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: voucher_hunt_test
+        ports:
+          - 5432:5432
+        # Steps start as soon as the container does, which is well before the
+        # server accepts connections.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,4 +61,6 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/voucher_hunt_test
       - run: npm run build
