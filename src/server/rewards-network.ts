@@ -281,6 +281,15 @@ function mapRedemption(row: Row): RewardVoucherRedemption {
   };
 }
 
+/**
+ * Appends one entry to the tamper-evident log.
+ *
+ * Exported as `recordRewardAudit` for callers outside this module — account
+ * deletion writes here so that "this account was deleted" is itself chained,
+ * and unforgeable after the fact. Everything the log holds is an id or an
+ * amount; never a name, a number or an email, which is what lets a deleted
+ * customer's entries stay in the chain untouched.
+ */
 async function audit(
   db: Exec,
   input: {
@@ -324,6 +333,8 @@ async function audit(
     ],
   );
 }
+
+export { audit as recordRewardAudit };
 
 async function getBusinessOrThrow(db: Exec, businessId: string) {
   const row = await one(
