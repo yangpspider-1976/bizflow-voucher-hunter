@@ -56,6 +56,7 @@ export default async function NewSlotPage({
     >
       <SlotForm
         campaignId={campaign.id}
+        campaignWindow={{ startDate: campaign.startDate, endDate: campaign.endDate }}
         initialValues={initialValues}
         requestMode={isBusinessScoped}
         returnHref={returnHref}

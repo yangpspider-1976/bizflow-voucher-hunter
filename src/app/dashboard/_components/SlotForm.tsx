@@ -29,18 +29,23 @@ function slotState(initialValues?: SlotRequestDraft) {
 /**
  * Create (or re-request) a date/time slot.
  *
+ * The date picker is bounded by the campaign window, because a slot outside it
+ * is rejected on save either way — for a request, only once an admin gets to it.
+ *
  * `returnHref` carries the scope the operator came from, so submitting lands
  * back on the slots list for the same campaign rather than whichever one sorts
  * first.
  */
 export function SlotForm({
   campaignId,
+  campaignWindow,
   requestMode = false,
   revisionRequestId,
   initialValues,
   returnHref,
 }: {
   campaignId: string;
+  campaignWindow: { startDate: string; endDate: string };
   requestMode?: boolean;
   revisionRequestId?: string;
   initialValues?: SlotRequestDraft;
@@ -93,11 +98,16 @@ export function SlotForm({
           <label className="field">
             <span>Date</span>
             <input
+              max={campaignWindow.endDate}
+              min={campaignWindow.startDate}
               required
               type="date"
               value={slot.date}
               onChange={(event) => setSlot({ ...slot, date: event.target.value })}
             />
+            <small className="muted">
+              Campaign runs {campaignWindow.startDate} to {campaignWindow.endDate}.
+            </small>
           </label>
           <label className="field">
             <span>Total Capacity</span>

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { benefitValueProblem } from "@bizflow/shared";
-import { createPool, createSlot, getCampaign, type CreatePoolInput, type CreateSlotInput } from "@/server/admin";
+import { createPool, createSlot, getCampaign, slotWindowProblem, type CreatePoolInput, type CreateSlotInput } from "@/server/admin";
 import { AppError } from "@/server/errors";
 import { all, getDb, one, run, withTx } from "@/server/db";
 
@@ -59,8 +59,26 @@ function map(row: Record<string, unknown>): ChangeRequest {
   };
 }
 
+/**
+ * A request is checked against the same rules as a direct write.
+ *
+ * Business accounts reach slot creation through here instead of {@link createSlot},
+ * so without this the campaign window is only enforced when an admin approves —
+ * the business is told its request went through, then it silently fails days
+ * later in front of the reviewer, who cannot fix the date either.
+ */
 export async function requestCampaignChange(input: Omit<ChangeRequest, "id" | "businessId" | "status" | "createdAt" | "reviewedBy" | "reviewedAt">) {
   const campaign = await getCampaign(input.campaignId);
+  if (input.requestType === "slot_create") {
+    const problem = slotWindowProblem((input.payload as CreateSlotInput).date, campaign);
+    if (problem) {
+      throw new AppError(
+        "E-SLOT-WINDOW",
+        `${problem} Pick a date inside the window, or ask an admin to extend the campaign first.`,
+        422
+      );
+    }
+  }
   const request: ChangeRequest = { ...input, id: `chg_${crypto.randomBytes(9).toString("hex")}`, businessId: campaign.businessId, status: "Pending", createdAt: new Date().toISOString() };
   await run(await getDb(), "INSERT INTO change_requests (id,campaign_id,business_id,requested_by,request_type,payload,status,created_at) VALUES (?,?,?,?,?,?,?,?)", [request.id, request.campaignId, request.businessId, request.requestedBy, request.requestType, JSON.stringify(request.payload), request.status, request.createdAt]);
   return request;

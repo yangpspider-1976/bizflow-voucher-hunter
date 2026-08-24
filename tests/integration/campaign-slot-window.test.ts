@@ -3,8 +3,23 @@ import { ADMIN_SESSION_COOKIE, createAdminSession } from "@/lib/admin-session";
 import { PATCH as patchCampaign } from "@/app/api/campaigns/[id]/route";
 import { POST as postSlot } from "@/app/api/campaigns/[id]/slots/route";
 import { createCampaign, createSlot, listSlots, updateCampaign } from "@/server/admin";
+import { listChangeRequests, requestCampaignChange, reviseChangeRequest } from "@/server/change-requests";
 import { getDb, resetDb, run } from "@/server/db";
 import { listPublicCampaignCards } from "@/server/voucher-engine";
+
+async function businessRequest(url: string, body: unknown, businessId: string) {
+  const token = await createAdminSession({
+    email: "staff@example.com",
+    name: "Business",
+    role: "staff",
+    businessIds: [businessId]
+  });
+  return new Request(url, {
+    method: "POST",
+    headers: { cookie: `${ADMIN_SESSION_COOKIE}=${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}
 
 async function adminRequest(url: string, body: unknown, method: string) {
   const token = await createAdminSession({
@@ -105,6 +120,80 @@ describe("campaign window contains its bookable slots", () => {
       expect(
         (await listPublicCampaignCards()).find((card) => card.campaign.slug === "api-rescue")
       ).toMatchObject({ ended: false });
+    });
+  });
+
+  describe("through a business account's slot request", () => {
+    // A request is not a write, so it used to skip every check createSlot makes.
+    // The business saw "submitted", and the campaign window only bit days later,
+    // when an admin approved and the create threw in front of them.
+    it("rejects an out-of-window request with 422 and files nothing", async () => {
+      const campaign = await campaignWithWindow("biz-slot", "2026-07-05", "2026-07-06");
+      const response = await postSlot(
+        await businessRequest(
+          `http://localhost/api/campaigns/${campaign.id}/slots`,
+          slotInput("2026-07-20"),
+          campaign.businessId
+        ),
+        { params: { id: campaign.id } }
+      );
+      expect(response.status).toBe(422);
+      expect((await response.json()).error.code).toBe("E-SLOT-WINDOW");
+      expect(await listChangeRequests(campaign.id, "slot_create")).toHaveLength(0);
+      expect(await listSlots(campaign.id)).toHaveLength(0);
+    });
+
+    it("tells the business what the window is, without telling it to widen one it cannot edit", async () => {
+      const campaign = await campaignWithWindow("biz-message", "2026-07-05", "2026-07-06");
+      const response = await postSlot(
+        await businessRequest(
+          `http://localhost/api/campaigns/${campaign.id}/slots`,
+          slotInput("2026-07-04"),
+          campaign.businessId
+        ),
+        { params: { id: campaign.id } }
+      );
+      const message = (await response.json()).error.message as string;
+      expect(message).toMatch(
+        /2026-07-04 is outside the campaign window \(2026-07-05 to 2026-07-06\)/
+      );
+      expect(message).toMatch(/ask an admin to extend the campaign/);
+    });
+
+    it("still queues a request inside the window, boundaries included", async () => {
+      const campaign = await campaignWithWindow("biz-inside", "2026-07-05", "2026-07-10");
+      for (const date of ["2026-07-05", "2026-07-07", "2026-07-10"]) {
+        const response = await postSlot(
+          await businessRequest(
+            `http://localhost/api/campaigns/${campaign.id}/slots`,
+            slotInput(date),
+            campaign.businessId
+          ),
+          { params: { id: campaign.id } }
+        );
+        expect(response.status).toBe(202);
+        expect((await response.json()).data.status).toBe("Pending");
+      }
+      expect(await listChangeRequests(campaign.id, "slot_create")).toHaveLength(3);
+      // Requests are queued, not applied: no slot exists until an admin approves.
+      expect(await listSlots(campaign.id)).toHaveLength(0);
+    });
+
+    it("rejects a revision that moves the date out of the window", async () => {
+      const campaign = await campaignWithWindow("biz-revise", "2026-07-05", "2026-07-10");
+      const request = await requestCampaignChange({
+        campaignId: campaign.id,
+        requestedBy: "staff@example.com",
+        requestType: "slot_create",
+        payload: slotInput("2026-07-06")
+      });
+      const db = await getDb();
+      await run(db, "UPDATE change_requests SET status='Rejected' WHERE id = ?", [request.id]);
+
+      await expect(
+        reviseChangeRequest(request.id, slotInput("2026-07-20"))
+      ).rejects.toMatchObject({ code: "E-SLOT-WINDOW", status: 422 });
+      expect(await listChangeRequests(campaign.id, "slot_create")).toHaveLength(1);
     });
   });
 

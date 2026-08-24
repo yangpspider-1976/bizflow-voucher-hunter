@@ -370,8 +370,13 @@ export async function updateCampaign(idOrSlug: string, patch: Partial<CreateCamp
  * the dashboard and does not exist at all in the app, with nothing anywhere
  * saying why. Dates are ISO `YYYY-MM-DD`, so string comparison is chronological.
  */
-function slotOutsideWindow(date: string, startDate: string, endDate: string) {
-  return date < startDate || date > endDate;
+export function slotWindowProblem(
+  date: string,
+  campaign: Pick<Campaign, "startDate" | "endDate">
+): string | null {
+  return date < campaign.startDate || date > campaign.endDate
+    ? `Slot date ${date} is outside the campaign window (${campaign.startDate} to ${campaign.endDate}).`
+    : null;
 }
 
 /**
@@ -409,10 +414,11 @@ export async function createSlot(campaignIdOrSlug: string, input: CreateSlotInpu
   if (input.endTime <= input.startTime) {
     throw new AppError("E-SLOT-TIME", "Slot endTime must be after startTime", 422);
   }
-  if (slotOutsideWindow(input.date, campaign.startDate, campaign.endDate)) {
+  const windowProblem = slotWindowProblem(input.date, campaign);
+  if (windowProblem) {
     throw new AppError(
       "E-SLOT-WINDOW",
-      `Slot date ${input.date} is outside the campaign window (${campaign.startDate} to ${campaign.endDate}). Extend the campaign dates first, or pick a date inside them.`,
+      `${windowProblem} Extend the campaign dates first, or pick a date inside them.`,
       422
     );
   }
