@@ -26,6 +26,13 @@ const PHONE_REQUEST_WINDOW_MS = 15 * 60_000;
 // itself, not for one campaign. The challenge table's campaign_id is plain
 // NOT NULL text with no FK, so a sentinel scope is safe.
 const SIGNIN_SCOPE = "__signin__";
+/**
+ * Account deletion gets a scope of its own, and it is not decoration: the scope
+ * is hashed into the code, so a code someone was talked into reading out "to
+ * sign in" cannot be replayed to erase their account, and the two flows cannot
+ * consume each other's challenges. The SMS says which one it is, too.
+ */
+const DELETION_SCOPE = "__delete__";
 
 function hashCode(scope: string, phone: string, code: string) {
   const salt = process.env.OTP_SALT ?? process.env.ADMIN_ACCESS_TOKEN ?? "bizflow-otp";
@@ -95,21 +102,28 @@ function codeMatches(expected: string, provided: string) {
  * actually sent to the number, so an SMS flood costs the same whether it comes
  * from one address or a thousand.
  */
-async function codesSentRecently(db: Awaited<ReturnType<typeof getDb>>, phone: string) {
+async function codesSentRecently(
+  db: Awaited<ReturnType<typeof getDb>>,
+  phone: string,
+  scope: string,
+) {
   const since = new Date(Date.now() - PHONE_REQUEST_WINDOW_MS).toISOString();
   const row = await one(
     db,
     "SELECT COUNT(*) AS c FROM otp_challenges WHERE campaign_id = ? AND phone = ? AND created_at >= ?",
-    [SIGNIN_SCOPE, phone, since],
+    [scope, phone, since],
   );
   return Number(row?.c ?? 0);
 }
 
-/** Generates a 6-digit sign-in code, stores its hash, and sends it via SMS. */
-export async function requestSignInOtp(input: {
+/** Generates a 6-digit code for one scope, stores its hash, and sends it via SMS. */
+async function requestOtp(input: {
   phone: string;
+  scope: string;
+  message: (code: string) => string;
 }): Promise<{ sent: boolean; expiresAt: string; devCode?: string }> {
   const db = await getDb();
+  const { scope } = input;
   const phone = requireValidPhone(input.phone);
 
   // No challenge row and no SMS for a fixed-code account: the number may not be
@@ -120,7 +134,7 @@ export async function requestSignInOtp(input: {
     return { sent: true, expiresAt: new Date(Date.now() + OTP_TTL_MS).toISOString() };
   }
 
-  if ((await codesSentRecently(db, phone)) >= MAX_CODES_PER_PHONE_WINDOW) {
+  if ((await codesSentRecently(db, phone, scope)) >= MAX_CODES_PER_PHONE_WINDOW) {
     throw new AppError(
       "E-OTP-THROTTLED",
       "Too many codes have been sent to this number. Try again in a few minutes.",
@@ -137,18 +151,15 @@ export async function requestSignInOtp(input: {
     db,
     `UPDATE otp_challenges SET consumed_at = ?
      WHERE campaign_id = ? AND phone = ? AND consumed_at IS NULL`,
-    [isoNow(), SIGNIN_SCOPE, phone],
+    [isoNow(), scope, phone],
   );
   await run(
     db,
     `INSERT INTO otp_challenges (id, campaign_id, phone, code_hash, expires_at, verified, attempts, created_at)
      VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
-    [otpId(), SIGNIN_SCOPE, phone, hashCode(SIGNIN_SCOPE, phone, code), expiresAt, isoNow()]
+    [otpId(), scope, phone, hashCode(scope, phone, code), expiresAt, isoNow()]
   );
-  const result: SmsResult = await sendSms(
-    phone,
-    `[Voucher Hunt] Your sign-in code is ${code}. It expires in 5 minutes.`
-  );
+  const result: SmsResult = await sendSms(phone, input.message(code));
   // Surface the code outside production so local/demo/tests can complete the
   // flow without a live SMS — but only when nothing was actually sent. With the
   // "Live SMS" switch on, a real text goes out and echoing the code back would
@@ -162,14 +173,16 @@ export async function requestSignInOtp(input: {
 }
 
 /**
- * Verifies a sign-in code and returns the now-proven phone. The challenge is
- * consumed so a code cannot be replayed.
+ * Verifies a code within one scope and returns the now-proven phone. The
+ * challenge is consumed so a code cannot be replayed.
  */
-export async function verifySignInOtp(input: {
+async function verifyOtp(input: {
   phone: string;
   code: string;
+  scope: string;
 }): Promise<{ phone: string }> {
   const db = await getDb();
+  const { scope } = input;
   const phone = requireValidPhone(input.phone);
 
   // A fixed code is accepted without a stored challenge and is never consumed —
@@ -189,7 +202,7 @@ export async function verifySignInOtp(input: {
     `SELECT * FROM otp_challenges
      WHERE campaign_id = ? AND phone = ? AND consumed_at IS NULL
      ORDER BY created_at DESC LIMIT 1`,
-    [SIGNIN_SCOPE, phone]
+    [scope, phone]
   );
   const row = rows[0] as
     | { id: string; code_hash: string; expires_at: string; attempts?: number }
@@ -212,7 +225,7 @@ export async function verifySignInOtp(input: {
   }
   await run(db, "UPDATE otp_challenges SET attempts = ? WHERE id = ?", [attempts, row.id]);
 
-  if (!codeMatches(row.code_hash, hashCode(SIGNIN_SCOPE, phone, input.code))) {
+  if (!codeMatches(row.code_hash, hashCode(scope, phone, input.code))) {
     if (attempts >= MAX_VERIFY_ATTEMPTS) {
       await run(db, "UPDATE otp_challenges SET consumed_at = ? WHERE id = ?", [isoNow(), row.id]);
     }
@@ -220,4 +233,45 @@ export async function verifySignInOtp(input: {
   }
   await run(db, "UPDATE otp_challenges SET verified = 1, consumed_at = ? WHERE id = ?", [isoNow(), row.id]);
   return { phone };
+}
+
+/** Generates a 6-digit sign-in code, stores its hash, and sends it via SMS. */
+export function requestSignInOtp(input: { phone: string }) {
+  return requestOtp({
+    phone: input.phone,
+    scope: SIGNIN_SCOPE,
+    message: (code) => `[Voucher Hunt] Your sign-in code is ${code}. It expires in 5 minutes.`,
+  });
+}
+
+/** Verifies a sign-in code and returns the now-proven phone. */
+export function verifySignInOtp(input: { phone: string; code: string }) {
+  return verifyOtp({ ...input, scope: SIGNIN_SCOPE });
+}
+
+/**
+ * Sends the code that authorises deleting an account.
+ *
+ * The message spells out what the code does. An OTP whose text does not say
+ * what it authorises is the whole mechanism behind a "read me the code" scam,
+ * and this one destroys a balance rather than opening a session. It stays
+ * inside one SMS segment.
+ *
+ * A fixed-code account (the Play reviewer, the dev numbers) can delete itself
+ * with its fixed code, exactly as it can sign in with it. That is deliberate:
+ * a reviewer asked to check the deletion path has to be able to walk it, and
+ * the account rebuilds itself on the next sign-in.
+ */
+export function requestAccountDeletionOtp(input: { phone: string }) {
+  return requestOtp({
+    phone: input.phone,
+    scope: DELETION_SCOPE,
+    message: (code) =>
+      `[Voucher Hunt] Code ${code} DELETES your account. Expires in 5 minutes. Deletion is permanent and unspent Loyalty Points are lost.`,
+  });
+}
+
+/** Verifies a deletion code and returns the now-proven phone. */
+export function verifyAccountDeletionOtp(input: { phone: string; code: string }) {
+  return verifyOtp({ ...input, scope: DELETION_SCOPE });
 }

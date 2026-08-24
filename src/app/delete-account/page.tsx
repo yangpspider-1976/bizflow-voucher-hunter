@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 // /privacy and the marketing page from one module so the three cannot drift
 // apart.
 import { SUPPORT_EMAIL } from "@/lib/contact";
+import DeleteAccountForm from "./_components/DeleteAccountForm";
 
 export const metadata: Metadata = {
   title: "Delete your account — Voucher Hunt",
@@ -40,7 +41,20 @@ export default function DeleteAccountPage() {
         by <strong>Voucher Hunt</strong>.
       </p>
 
-      <h2>How to request deletion</h2>
+      <h2>Delete your account</h2>
+      <p>
+        Do it here, in two steps and without installing anything. Enter the
+        mobile number you sign in with, confirm the 6-digit code we text to it,
+        and the account is deleted immediately.
+      </p>
+
+      <DeleteAccountForm />
+
+      <h2>If you cannot use the form</h2>
+      <p>
+        For example, if you no longer have the SIM for the number you signed in
+        with:
+      </p>
       <ol>
         <li>
           Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from any
@@ -51,8 +65,8 @@ export default function DeleteAccountPage() {
           only way we can find your account.
         </li>
         <li>
-          We reply to that number by SMS with a 6-digit code to confirm the
-          request really came from you. Send the code back to us.
+          We reply asking for something that shows the number was yours, since
+          without the handset the code above cannot prove it.
         </li>
         <li>
           Your account is deleted within <strong>30 days</strong> of that
@@ -62,7 +76,7 @@ export default function DeleteAccountPage() {
 
       <p>
         You can also start this from inside the app: <em>More → Delete my
-        account</em>.
+        account</em>, which opens this page.
       </p>
 
       <h2>What is deleted</h2>

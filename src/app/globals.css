@@ -4693,6 +4693,45 @@ th {
     text-decoration: underline;
 }
 
+/* Self-serve deletion, the one interactive island on an otherwise static legal
+   page. Held to the prose column's width so it reads as part of the page rather
+   than an app pasted into it. */
+.delete-account-form {
+    margin: 18px 0 8px;
+    display: grid;
+    gap: 10px;
+}
+
+.delete-account-form h3 {
+    font-size: 1.05rem;
+}
+
+.delete-account-form p {
+    font-size: 0.9rem;
+}
+
+.delete-account-form .field {
+    margin-bottom: 0;
+}
+
+/* The consent line is the last thing read before the button unlocks, so the
+   checkbox sits against the text rather than in a column of its own. */
+.delete-account-confirm {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.delete-account-confirm input {
+    margin-top: 3px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    accent-color: var(--purple);
+}
+
 /*
  * ---------------------------------------------------------------------------
  * Business marketing home (/).

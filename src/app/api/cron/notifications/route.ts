@@ -1,4 +1,5 @@
-import { AppError, fail, ok } from "@/server/errors";
+import { assertCronAuth } from "@/server/cron-auth";
+import { fail, ok } from "@/server/errors";
 import {
   notifyDailyLoyaltyAvailable,
   notifyReservationReminder,
@@ -12,6 +13,12 @@ export const revalidate = 0;
 /** Fan-out over many customers; well beyond the default serverless budget. */
 export const maxDuration = 60;
 
+/** `YYYY-MM-DD` for the Manila day `offsetDays` from now. */
+function manilaDateOffset(offsetDays: number) {
+  const target = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+  return manilaDateParts(target).date;
+}
+
 /**
  * Scheduled notification fan-out.
  *
@@ -21,33 +28,10 @@ export const maxDuration = 60;
  *   - `daily`       once a day, mid-morning Manila
  *   - `reservation` once a day, so bookings get a day-ahead reminder
  *
- * Auth: a shared secret in `CRON_SECRET`, sent as `Authorization: Bearer` (what
- * Vercel Cron sends) or `?secret=`. The route refuses to run when the variable
- * is unset, so a misconfigured deploy cannot leave it publicly invocable.
+ * Auth: `assertCronAuth` — the shared `CRON_SECRET`, sent as `Authorization:
+ * Bearer` (what Vercel Cron sends) or `?secret=`. It refuses to run when the
+ * variable is unset, so a misconfigured deploy is never publicly invocable.
  */
-function assertCronAuth(request: Request) {
-  const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) {
-    throw new AppError(
-      "E-CRON-UNCONFIGURED",
-      "CRON_SECRET is not configured",
-      503,
-    );
-  }
-  const header = request.headers.get("authorization") ?? "";
-  const bearer = header.replace(/^Bearer\s+/i, "").trim();
-  const query = new URL(request.url).searchParams.get("secret")?.trim() ?? "";
-  if (bearer !== expected && query !== expected) {
-    throw new AppError("E-CRON-AUTH", "Invalid cron secret", 401);
-  }
-}
-
-/** `YYYY-MM-DD` for the Manila day `offsetDays` from now. */
-function manilaDateOffset(offsetDays: number) {
-  const target = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
-  return manilaDateParts(target).date;
-}
-
 export async function POST(request: Request) {
   try {
     assertCronAuth(request);
