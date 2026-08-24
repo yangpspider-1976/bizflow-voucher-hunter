@@ -20,8 +20,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://bizflow-voucher-hunt.vercel.app",
-        "EXPO_PUBLIC_APP_LINK_HOST": "bizflow-voucher-hunt.vercel.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://voucher-hunt.com",
+        "EXPO_PUBLIC_APP_LINK_HOST": "voucher-hunt.com"
       }
     },
     "production": {
@@ -31,8 +31,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://bizflow-voucher-hunt.vercel.app",
-        "EXPO_PUBLIC_APP_LINK_HOST": "bizflow-voucher-hunt.vercel.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://voucher-hunt.com",
+        "EXPO_PUBLIC_APP_LINK_HOST": "voucher-hunt.com"
       }
     },
     // A directly installable build of exactly what "production" ships. Play
