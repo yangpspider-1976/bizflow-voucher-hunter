@@ -82,8 +82,13 @@ export function formatTime(time: string, locale = "en-PH") {
   }).format(new Date(`2000-01-01T${time}:00+08:00`));
 }
 
-export function campaignModeLabel(t: Translate, mode: string) {
-  return t(MODE_KEYS[mode] ?? "mode.other");
+/**
+ * Names a category for display. Business industry and campaign mode share this
+ * enum, but only the industry is the customer-facing category — pass `mode` here
+ * solely when the booking mechanic itself is what is being named.
+ */
+export function campaignModeLabel(t: Translate, category: string) {
+  return t(MODE_KEYS[category] ?? "mode.other");
 }
 
 export function campaignInstruction(t: Translate, mode: string) {

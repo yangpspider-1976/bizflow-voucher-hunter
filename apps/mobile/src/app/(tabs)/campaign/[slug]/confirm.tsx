@@ -164,7 +164,7 @@ export default function ConfirmScreen() {
           <SummaryRow
             icon="tag"
             label={t("confirm.category")}
-            value={campaignModeLabel(t, campaign?.campaign.mode ?? "other")}
+            value={campaignModeLabel(t, campaign?.business?.industry ?? "other")}
           />
         </SummaryList>
 

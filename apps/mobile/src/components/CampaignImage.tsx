@@ -8,7 +8,7 @@ import { campaignModeLabel } from "@/lib/format";
 import { colors, fonts, radius } from "@/theme";
 
 /** `.campaign-landing-category.mode-*` — the pill overlaid on the landing artwork. */
-const MODE_TINTS: Record<string, { color: string; border: string }> = {
+const CATEGORY_TINTS: Record<string, { color: string; border: string }> = {
   restaurant: { color: "#c2410c", border: "#fed7aa" },
   online_shop: { color: "#1d4ed8", border: "#bfdbfe" },
   beauty: { color: "#be185d", border: "#fbcfe8" },
@@ -18,9 +18,14 @@ const MODE_TINTS: Record<string, { color: string; border: string }> = {
 };
 
 type CampaignImageProps = {
-  campaign: Pick<Campaign, "heroImage" | "slug" | "title" | "mode">;
-  /** Draws the category pill over the artwork, as the campaign landing does. */
-  showCategory?: boolean;
+  campaign: Pick<Campaign, "heroImage" | "slug" | "title">;
+  /**
+   * Business industry. Passing it draws the category pill over the artwork, as
+   * the campaign landing does. This is deliberately not `campaign.mode`: mode is
+   * the booking mechanic, so a pet clinic taking appointments runs in restaurant
+   * mode and would otherwise be labelled "Restaurant".
+   */
+  category?: string;
   /** Corner radius; the directory card rounds its media, the landing does not. */
   borderRadius?: number;
   style?: object;
@@ -35,14 +40,14 @@ type CampaignImageProps = {
 export function CampaignImage({
   borderRadius = 0,
   campaign,
-  showCategory = false,
+  category,
   style,
 }: CampaignImageProps) {
   const t = useTranslation();
   const image = resolveCampaignImage(campaign);
   if (!image) return null;
 
-  const tint = MODE_TINTS[campaign.mode] ?? MODE_TINTS.other;
+  const tint = CATEGORY_TINTS[category ?? "other"] ?? CATEGORY_TINTS.other;
 
   return (
     <View style={[styles.media, { borderRadius }, style]}>
@@ -53,10 +58,10 @@ export function CampaignImage({
         style={styles.image}
         transition={160}
       />
-      {showCategory ? (
+      {category ? (
         <View style={[styles.category, { borderColor: tint.border }]}>
           <Text style={[styles.categoryText, { color: tint.color }]}>
-            {campaignModeLabel(t, campaign.mode)}
+            {campaignModeLabel(t, category)}
           </Text>
         </View>
       ) : null}

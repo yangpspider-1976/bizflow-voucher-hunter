@@ -1348,7 +1348,7 @@ export const seedData: {
       slug: "july-dinner",
       title: "July Dinner",
       location: "Makati City",
-      offerMessage: "Hunt for your dining voucher first, then choose your visit date and time.",
+      offerMessage: "Win up to 90% off your dinner bill, with free dessert in the mix.",
       heroImage:
         "linear-gradient(135deg, rgba(21,72,87,.9), rgba(229,90,54,.76)), url('https://images.unsplash.com/photo-1559339352-11d035aa65de?auto=format&fit=crop&w=1600&q=80')",
       mode: "restaurant",
@@ -1367,7 +1367,7 @@ export const seedData: {
       slug: "8pm-drop",
       title: "8PM Shopping",
       location: "Online · Nationwide",
-      offerMessage: "Hunt for your checkout reward first, then choose an available drop window.",
+      offerMessage: "Win up to 90% off your cart, with free shipping in the mix.",
       heroImage:
         "linear-gradient(135deg, rgba(29,44,74,.9), rgba(38,142,125,.72)), url('https://images.unsplash.com/photo-1607082350899-7e105aa886ae?auto=format&fit=crop&w=1600&q=80')",
       mode: "online_shop",
@@ -1387,7 +1387,7 @@ export const seedData: {
       slug: "glow-facial",
       title: "Glow Facial Week",
       location: "BGC, Taguig",
-      offerMessage: "Hunt for your skincare voucher first, then choose your appointment date and time.",
+      offerMessage: "Win up to 70% off your facial, with a free add-on treatment in the mix.",
       heroImage:
         "linear-gradient(135deg, rgba(120,52,110,.9), rgba(233,120,150,.72)), url('https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1600&q=80')",
       // Appointment-based flow: same reservation mechanics as a restaurant slot.

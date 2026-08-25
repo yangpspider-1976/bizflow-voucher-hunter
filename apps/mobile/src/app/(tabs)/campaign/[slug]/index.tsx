@@ -274,6 +274,10 @@ export default function CampaignLandingScreen() {
   }
 
   const { availability, business, campaign: details } = campaign;
+  // The business writes this pitch in the dashboard, so it arrives in one
+  // language only. It leads, and the translated instruction stays underneath
+  // rather than being replaced by it.
+  const offerMessage = details.offerMessage?.trim() ?? "";
   // A customer who already holds a voucher (or a live attempt) still needs the
   // button: their next step is booking or confirming, not drawing. Only a fresh
   // hunt is blocked, and only when the draw would refuse it anyway.
@@ -325,11 +329,17 @@ export default function CampaignLandingScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.landingCard}>
-          <CampaignImage campaign={details} showCategory />
+          <CampaignImage
+            campaign={details}
+            category={business?.industry ?? "other"}
+          />
           <View style={styles.landingBody}>
           <Text style={styles.eyebrow}>{t("campaign.selectedEyebrow")}</Text>
           <Text style={styles.campaignTitle}>{details.title}</Text>
           <Text style={styles.business}>{campaign.business?.name ?? ""}</Text>
+          {offerMessage ? (
+            <Text style={styles.offerMessage}>{offerMessage}</Text>
+          ) : null}
           <Text style={styles.offer}>{campaignInstruction(t, details.mode)}</Text>
           <View style={styles.metaRow}>
             <View style={styles.metaIcon}>
@@ -676,12 +686,18 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: 14,
   },
-  offer: {
+  offerMessage: {
     color: colors.ink,
+    fontFamily: fonts.semibold,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: spacing.sm,
+  },
+  offer: {
+    color: colors.textMuted,
     fontFamily: fonts.regular,
     fontSize: 14,
     lineHeight: 21,
-    marginTop: spacing.sm,
   },
   venueCard: {
     backgroundColor: colors.surface,
