@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { filterCampaignsForSession } from "@/server/auth";
 import { listChangeRequests } from "@/server/change-requests";
+import { manilaDateString } from "@/server/db";
 import { FormPage } from "../../_components/FormPage";
 import { scopedHref, selectScope } from "../../_components/selectCampaign";
 import { SlotForm, type SlotRequestDraft } from "../../_components/SlotForm";
@@ -61,6 +62,7 @@ export default async function NewSlotPage({
         requestMode={isBusinessScoped}
         returnHref={returnHref}
         revisionRequestId={revising ? searchParams.revise : undefined}
+        today={manilaDateString()}
       />
     </FormPage>
   );
