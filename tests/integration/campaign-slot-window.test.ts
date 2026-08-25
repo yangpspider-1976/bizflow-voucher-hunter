@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_SESSION_COOKIE, createAdminSession } from "@/lib/admin-session";
 import { PATCH as patchCampaign } from "@/app/api/campaigns/[id]/route";
 import { POST as postSlot } from "@/app/api/campaigns/[id]/slots/route";
 import { createCampaign, createSlot, listSlots, updateCampaign } from "@/server/admin";
-import { listChangeRequests, requestCampaignChange, reviseChangeRequest } from "@/server/change-requests";
+import { decideChangeRequest, listChangeRequests, requestCampaignChange, reviseChangeRequest } from "@/server/change-requests";
 import { getDb, resetDb, run } from "@/server/db";
 import { listPublicCampaignCards } from "@/server/voucher-engine";
 
@@ -235,6 +235,104 @@ describe("campaign window contains its bookable slots", () => {
       await expect(createSlot(campaign.id, slotInput("2026-07-20"))).rejects.toThrow(
         /2026-07-20 is outside the campaign window \(2026-07-05 to 2026-07-06\)/
       );
+    });
+  });
+
+  /**
+   * The window says which dates belong to the campaign. It cannot say which of
+   * them are still ahead, so a campaign running to the end of the month took a
+   * slot dated last week without complaint — capacity nobody can reserve, top
+   * of the slot list, invisible as a mistake until someone counts bookings.
+   */
+  describe("a date that has already passed", () => {
+    it("is refused even though it sits inside the window", async () => {
+      const campaign = await campaignWithWindow("past-inside", "2026-07-01", "2026-07-31");
+      await expect(createSlot(campaign.id, slotInput("2026-07-02"))).rejects.toMatchObject({
+        code: "E-SLOT-WINDOW",
+        status: 422
+      });
+      expect(await listSlots(campaign.id)).toHaveLength(0);
+    });
+
+    it("says it has passed rather than blaming the window it is inside", async () => {
+      const campaign = await campaignWithWindow("past-message", "2026-07-01", "2026-07-31");
+      await expect(createSlot(campaign.id, slotInput("2026-07-02"))).rejects.toThrow(
+        /2026-07-02 has already passed. Pick a date from today onward./
+      );
+    });
+
+    it("still allows today, which has not", async () => {
+      const campaign = await campaignWithWindow("past-today", "2026-07-01", "2026-07-31");
+      await expect(createSlot(campaign.id, slotInput(TODAY))).resolves.toMatchObject({
+        date: TODAY
+      });
+    });
+
+    it("is refused at the request too, and files nothing", async () => {
+      const campaign = await campaignWithWindow("past-request", "2026-07-01", "2026-07-31");
+      const response = await postSlot(
+        await businessRequest(
+          `http://localhost/api/campaigns/${campaign.id}/slots`,
+          slotInput("2026-07-02"),
+          campaign.businessId
+        ),
+        { params: { id: campaign.id } }
+      );
+      expect(response.status).toBe(422);
+      expect((await response.json()).error.message).toMatch(/has already passed/);
+      expect(await listChangeRequests(campaign.id, "slot_create")).toHaveLength(0);
+    });
+
+    it("catches a pending request that went stale while it waited", async () => {
+      const campaign = await campaignWithWindow("stale", "2026-07-01", "2026-07-31");
+      const request = await requestCampaignChange({
+        campaignId: campaign.id,
+        requestedBy: "staff@example.com",
+        requestType: "slot_create",
+        payload: slotInput("2026-07-04")
+      });
+
+      // The admin gets to it a week later. The date was valid when it was filed.
+      vi.setSystemTime(new Date("2026-07-10T12:00:00+08:00"));
+
+      await expect(
+        decideChangeRequest(request.id, true, "admin@example.com")
+      ).rejects.toThrow(/2026-07-04 has already passed. Reject this request/);
+
+      // Refused, not half-applied: no slot, and the request is still reviewable.
+      expect(await listSlots(campaign.id)).toHaveLength(0);
+      expect(await listChangeRequests(campaign.id, "slot_create")).toMatchObject([
+        { id: request.id, status: "Pending" }
+      ]);
+    });
+
+    it("lets the admin reject that stale request, which is the way out", async () => {
+      const campaign = await campaignWithWindow("stale-reject", "2026-07-01", "2026-07-31");
+      const request = await requestCampaignChange({
+        campaignId: campaign.id,
+        requestedBy: "staff@example.com",
+        requestType: "slot_create",
+        payload: slotInput("2026-07-04")
+      });
+      vi.setSystemTime(new Date("2026-07-10T12:00:00+08:00"));
+
+      await decideChangeRequest(request.id, false, "admin@example.com");
+      expect(await listChangeRequests(campaign.id, "slot_create")).toMatchObject([
+        { id: request.id, status: "Rejected" }
+      ]);
+    });
+
+    it("approves a pending request whose date is still ahead", async () => {
+      const campaign = await campaignWithWindow("fresh", "2026-07-01", "2026-07-31");
+      const request = await requestCampaignChange({
+        campaignId: campaign.id,
+        requestedBy: "staff@example.com",
+        requestType: "slot_create",
+        payload: slotInput("2026-07-20")
+      });
+
+      await decideChangeRequest(request.id, true, "admin@example.com");
+      expect(await listSlots(campaign.id)).toMatchObject([{ date: "2026-07-20" }]);
     });
   });
 

@@ -292,7 +292,7 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
   return campaign;
 }
 
-async function getCampaignFromDb(db: Exec, idOrSlug: string): Promise<Campaign> {
+export async function getCampaignFromDb(db: Exec, idOrSlug: string): Promise<Campaign> {
   const row = await one(db, "SELECT * FROM campaigns WHERE id = ? OR slug = ?", [idOrSlug, idOrSlug]);
   if (!row) throw new AppError("E-CAMPAIGN-404", "Campaign was not found", 404);
   return mapCampaign(row);
@@ -361,22 +361,42 @@ export async function updateCampaign(idOrSlug: string, patch: Partial<CreateCamp
 }
 
 /**
- * A campaign's window has to contain every slot customers can still book.
+ * The two ways a slot's date can be one nobody will ever book on.
  *
- * Both halves of this are the same defect seen from opposite ends: a slot dated
+ * A campaign's window has to contain every slot customers can still book. Both
+ * halves of that are the same defect seen from opposite ends: a slot dated
  * outside its campaign is invisible in the public directory, because the
  * directory drops campaigns whose `end_date` has passed while the draw happily
  * keeps offering the stranded slot. The campaign then reads as fully bookable in
  * the dashboard and does not exist at all in the app, with nothing anywhere
- * saying why. Dates are ISO `YYYY-MM-DD`, so string comparison is chronological.
+ * saying why.
+ *
+ * A date that has already passed is the same dead slot arrived at by the other
+ * route, and the window alone never catches it: a campaign running to December
+ * accepts a slot dated last week quite happily. It takes capacity, sorts to the
+ * top of the slot list where dates ascend, and can never be reserved. Checked
+ * against the Manila day because that is the timezone slots are kept in, so a
+ * reviewer in another one cannot approve yesterday by being west of it.
+ *
+ * Dates are ISO `YYYY-MM-DD`, so string comparison is chronological.
  */
-export function slotWindowProblem(
+export type SlotDateProblem = { reason: "past" | "window"; message: string };
+
+export function slotDateProblem(
   date: string,
-  campaign: Pick<Campaign, "startDate" | "endDate">
-): string | null {
-  return date < campaign.startDate || date > campaign.endDate
-    ? `Slot date ${date} is outside the campaign window (${campaign.startDate} to ${campaign.endDate}).`
-    : null;
+  campaign: Pick<Campaign, "startDate" | "endDate">,
+  today = manilaDateString()
+): SlotDateProblem | null {
+  if (date < today) {
+    return { reason: "past", message: `Slot date ${date} has already passed.` };
+  }
+  if (date < campaign.startDate || date > campaign.endDate) {
+    return {
+      reason: "window",
+      message: `Slot date ${date} is outside the campaign window (${campaign.startDate} to ${campaign.endDate}).`
+    };
+  }
+  return null;
 }
 
 /**
@@ -414,11 +434,15 @@ export async function createSlot(campaignIdOrSlug: string, input: CreateSlotInpu
   if (input.endTime <= input.startTime) {
     throw new AppError("E-SLOT-TIME", "Slot endTime must be after startTime", 422);
   }
-  const windowProblem = slotWindowProblem(input.date, campaign);
-  if (windowProblem) {
+  const dateProblem = slotDateProblem(input.date, campaign);
+  if (dateProblem) {
     throw new AppError(
       "E-SLOT-WINDOW",
-      `${windowProblem} Extend the campaign dates first, or pick a date inside them.`,
+      `${dateProblem.message} ${
+        dateProblem.reason === "past"
+          ? "Pick a date from today onward."
+          : "Extend the campaign dates first, or pick a date inside them."
+      }`,
       422
     );
   }

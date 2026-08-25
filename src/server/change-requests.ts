@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { benefitValueProblem } from "@bizflow/shared";
-import { createPool, createSlot, getCampaign, slotWindowProblem, type CreatePoolInput, type CreateSlotInput } from "@/server/admin";
+import { createPool, createSlot, getCampaign, getCampaignFromDb, slotDateProblem, type CreatePoolInput, type CreateSlotInput } from "@/server/admin";
 import { AppError } from "@/server/errors";
 import { all, getDb, one, run, withTx } from "@/server/db";
 
@@ -70,11 +70,15 @@ function map(row: Record<string, unknown>): ChangeRequest {
 export async function requestCampaignChange(input: Omit<ChangeRequest, "id" | "businessId" | "status" | "createdAt" | "reviewedBy" | "reviewedAt">) {
   const campaign = await getCampaign(input.campaignId);
   if (input.requestType === "slot_create") {
-    const problem = slotWindowProblem((input.payload as CreateSlotInput).date, campaign);
+    const problem = slotDateProblem((input.payload as CreateSlotInput).date, campaign);
     if (problem) {
       throw new AppError(
         "E-SLOT-WINDOW",
-        `${problem} Pick a date inside the window, or ask an admin to extend the campaign first.`,
+        `${problem.message} ${
+          problem.reason === "past"
+            ? "Pick a date from today onward."
+            : "Pick a date inside the window, or ask an admin to extend the campaign first."
+        }`,
         422
       );
     }
@@ -114,12 +118,34 @@ export async function listStaffChangeRequests(
   return rows.map(map);
 }
 
+/**
+ * A pending request can go stale while it waits.
+ *
+ * The date was checked when the business submitted it, and checking again at
+ * approval is not the same question: a slot for tomorrow, reviewed next week, is
+ * now a slot in the past. `createSlot` would refuse it either way, but its
+ * advice — pick another date — is addressed to someone who can, and a reviewer
+ * cannot: the request is immutable. So the reviewer is told the one thing that
+ * does move it, which is to reject it and let the business ask again.
+ */
 export async function decideChangeRequest(id: string, approved: boolean, reviewedBy: string) {
   return withTx(async (tx) => {
     const row = await one(tx, "SELECT * FROM change_requests WHERE id = ?", [id]);
     if (!row) throw new AppError("E-CHANGE-404", "Change request was not found", 404);
     const request = map(row);
     if (request.status !== "Pending") throw new AppError("E-CHANGE-STATE", "Change request has already been reviewed", 409);
+
+    if (approved && request.requestType === "slot_create") {
+      const campaign = await getCampaignFromDb(tx, request.campaignId);
+      const problem = slotDateProblem((request.payload as CreateSlotInput).date, campaign);
+      if (problem?.reason === "past") {
+        throw new AppError(
+          "E-SLOT-WINDOW",
+          `${problem.message} Reject this request and ask the business to request a date from today onward.`,
+          422
+        );
+      }
+    }
 
     const changed = await run(
       tx,
