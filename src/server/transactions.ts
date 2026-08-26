@@ -100,7 +100,11 @@ const UNION_SQL = `
     v.voucher_code AS reference,
     v.display_label AS detail,
     rl.note AS note,
-    CASE WHEN rl.purchase_amount IS NULL THEN NULL ELSE rl.purchase_amount * 100 END AS purchase_centavos,
+    -- Widened before the multiply, not after: the column is int4 and holds
+    -- pesos, so any sale over ₱21,474,836 overflowed 2^31 on the way to
+    -- centavos and took the whole page down with a 22003 rather than showing
+    -- the row. Both queries below embed this union, so the totals died with it.
+    CASE WHEN rl.purchase_amount IS NULL THEN NULL ELSE rl.purchase_amount::bigint * 100 END AS purchase_centavos,
     -- Typed, not bare: Postgres unions these pairwise, and an untyped NULL
     -- here meets an untyped NULL in the next branch, resolves the pair to text,
     -- and then cannot be matched to the third branch's integer.

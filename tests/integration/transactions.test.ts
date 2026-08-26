@@ -89,6 +89,21 @@ describe("dashboard transactions", () => {
     expect(totals.count).toBe(0);
   });
 
+  it("survives a sale too large for the pesos column to multiply", async () => {
+    await seedTransactions();
+    // `redemption_logs.purchase_amount` is int4 and holds pesos, so a sale this
+    // size stores fine and only overflows on the way to centavos. One such row
+    // used to 500 the whole page: both the list and the totals run the union.
+    await run(await getDb(), "UPDATE redemption_logs SET purchase_amount = ?", [
+      2_000_000_000,
+    ]);
+
+    const { rows, totals } = await listTransactions(ADMIN);
+    const redemption = rows.find((row) => row.kind === "voucher_redemption");
+    expect(redemption?.purchaseCentavos).toBe(200_000_000_000);
+    expect(totals.salesCentavos).toBeGreaterThan(200_000_000_000);
+  });
+
   it("unions voucher redemptions, LP earned and LP spent, newest first", async () => {
     const { voucherCode } = await seedTransactions();
 
