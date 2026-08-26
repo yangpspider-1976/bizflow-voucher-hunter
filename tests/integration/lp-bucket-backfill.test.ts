@@ -84,13 +84,14 @@ describe("partner bucket backfill", () => {
   });
 
   it("moves partner earnings into buckets and leaves the rest global", async () => {
-    // The wallet opens with 10 LP of daily app-use credit, which was never
-    // earned at a partner.
+    // The wallet opens with its daily app-use credit — a 1-10 LP draw — which
+    // was never earned at a partner. Every figure below is relative to it.
     const created = await getOrCreateRewardWallet({ phone });
     const walletId = created.wallet.id;
+    const daily = await globalCentavos(walletId);
     await earnedBeforeTheSplit(walletId, restaurant, 500_00);
     await earnedBeforeTheSplit(walletId, shop, 200_00);
-    expect(await globalCentavos(walletId)).toBe(710_00);
+    expect(await globalCentavos(walletId)).toBe(daily + 700_00);
 
     const result = await backfillPartnerLoyaltyBuckets();
     expect(result).toMatchObject({ wallets: 1, movedCentavos: 700_00 });
@@ -98,7 +99,7 @@ describe("partner bucket backfill", () => {
     expect(await bucketCentavos(walletId, restaurant)).toBe(500_00);
     expect(await bucketCentavos(walletId, shop)).toBe(200_00);
     // The daily reward stays where the holder can still spend it anywhere.
-    expect(await globalCentavos(walletId)).toBe(10_00);
+    expect(await globalCentavos(walletId)).toBe(daily);
 
     // Both sides of every movement are on the ledger, so a holder watching
     // their global balance fall can see where it went.
@@ -129,16 +130,17 @@ describe("partner bucket backfill", () => {
   it("caps at what is left after spending and splits it pro rata", async () => {
     const created = await getOrCreateRewardWallet({ phone });
     const walletId = created.wallet.id;
+    const daily = await globalCentavos(walletId);
     await earnedBeforeTheSplit(walletId, restaurant, 500_00);
     await earnedBeforeTheSplit(walletId, shop, 200_00);
 
-    // The holder spent 410 LP of the commingled pot before the split. Nothing
-    // records whose points those were, so the 290 LP still attributable to a
-    // partner is divided in the ratio the two are owed.
+    // The holder spent the pot down to 290 LP of partner-attributable points
+    // plus their own daily credit. Nothing records whose points were spent, so
+    // what is left to a partner is divided in the ratio the two are owed.
     await run(
       await getDb(),
       "UPDATE reward_wallets SET balance_centavos = ? WHERE id = ?",
-      [300_00, walletId],
+      [daily + 290_00, walletId],
     );
 
     const result = await backfillPartnerLoyaltyBuckets();
@@ -148,12 +150,13 @@ describe("partner bucket backfill", () => {
     // up to exactly what left the global pot.
     expect(await bucketCentavos(walletId, restaurant)).toBe(207_15);
     expect(await bucketCentavos(walletId, shop)).toBe(82_85);
-    expect(await globalCentavos(walletId)).toBe(10_00);
+    expect(await globalCentavos(walletId)).toBe(daily);
   });
 
   it("never moves the same points twice", async () => {
     const created = await getOrCreateRewardWallet({ phone });
     const walletId = created.wallet.id;
+    const daily = await globalCentavos(walletId);
     await earnedBeforeTheSplit(walletId, restaurant, 500_00);
     await backfillPartnerLoyaltyBuckets();
 
@@ -163,12 +166,13 @@ describe("partner bucket backfill", () => {
     const again = await backfillPartnerLoyaltyBuckets({ force: true });
     expect(again).toMatchObject({ wallets: 0, movedCentavos: 0 });
     expect(await bucketCentavos(walletId, restaurant)).toBe(500_00);
-    expect(await globalCentavos(walletId)).toBe(10_00);
+    expect(await globalCentavos(walletId)).toBe(daily);
   });
 
   it("leaves a wallet that earned after the split alone", async () => {
     const created = await getOrCreateRewardWallet({ phone });
     const walletId = created.wallet.id;
+    const daily = await globalCentavos(walletId);
     await creditRewardFromPurchase({
       walletToken: created.wallet.walletToken,
       businessId: restaurant,
@@ -183,19 +187,21 @@ describe("partner bucket backfill", () => {
     // The credit was already in its bucket, and the daily reward is still the
     // holder's to spend anywhere.
     expect(await bucketCentavos(walletId, restaurant)).toBe(200_00);
-    expect(await globalCentavos(walletId)).toBe(10_00);
+    expect(await globalCentavos(walletId)).toBe(daily);
   });
 
   it("moves nothing when spending already drained the pot", async () => {
     const created = await getOrCreateRewardWallet({ phone });
     const walletId = created.wallet.id;
+    const daily = await globalCentavos(walletId);
     await earnedBeforeTheSplit(walletId, restaurant, 500_00);
-    // Less left than the daily rewards alone account for: there is nothing a
-    // partner can claim without taking spend-anywhere points off the holder.
+    // Nothing left beyond the daily reward the holder earned themselves: there
+    // is nothing a partner can claim without taking spend-anywhere points off
+    // the holder.
     await run(
       await getDb(),
       "UPDATE reward_wallets SET balance_centavos = ? WHERE id = ?",
-      [5_00, walletId],
+      [daily, walletId],
     );
 
     expect(await backfillPartnerLoyaltyBuckets()).toMatchObject({
@@ -203,6 +209,6 @@ describe("partner bucket backfill", () => {
       movedCentavos: 0,
     });
     expect(await bucketCentavos(walletId, restaurant)).toBe(0);
-    expect(await globalCentavos(walletId)).toBe(5_00);
+    expect(await globalCentavos(walletId)).toBe(daily);
   });
 });

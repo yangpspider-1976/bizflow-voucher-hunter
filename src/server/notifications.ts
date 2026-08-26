@@ -61,7 +61,7 @@ export function notifyDailyLoyaltyAvailable(input: {
   return sendPush({
     phone: input.phone,
     category: "daily",
-    title: "Your 10 LP is waiting",
+    title: "Your daily LP is waiting",
     body: "Open Voucher Hunt today to collect your daily Loyalty Points.",
     data: { type: "daily_loyalty" },
     dedupeKey: `daily:${input.phone}:${input.date}`,

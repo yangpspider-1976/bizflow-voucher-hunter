@@ -27,7 +27,14 @@ const SERVICE_FEE_BPS = 1_000; // 10.00%
  * strand customers mid-transaction over a shortfall the partner can settle.
  */
 export const MIN_DEPOSIT_CENTAVOS = 5_000_00; // PHP 5,000
-const DAILY_APP_USE_POINTS_CENTAVOS = 10_00; // 10 LP
+/**
+ * The daily app-use award is drawn fresh each day rather than paid flat, so
+ * opening the app is a small gamble instead of a fixed chore. The top of the
+ * band is what the flat award used to be, which keeps the advertised "up to
+ * 600 LP in 30 days" ceiling honest.
+ */
+const DAILY_APP_USE_MIN_POINTS_CENTAVOS = 1_00; // 1 LP
+const DAILY_APP_USE_MAX_POINTS_CENTAVOS = 10_00; // 10 LP
 const DAILY_REFERRAL_POINTS_CENTAVOS = 10_00; // 10 LP
 const MAX_PURCHASE_CENTAVOS = 1_000_000_00; // PHP 1,000,000 per scan
 const MAX_REDEMPTION_CENTAVOS = 250_000_00; // 250,000 LP per voucher payment
@@ -422,6 +429,25 @@ async function ensureRewardWallet(
   );
 }
 
+/**
+ * Today's app-use draw: whole LP only, inclusive at both ends.
+ *
+ * Whole points because the figure is shown in the award modal and summed in
+ * the ledger, where "7 LP" reads better than a fraction of one.
+ */
+function drawDailyAppUsePointsCentavos() {
+  const minPoints = DAILY_APP_USE_MIN_POINTS_CENTAVOS / 100;
+  const maxPoints = DAILY_APP_USE_MAX_POINTS_CENTAVOS / 100;
+  return crypto.randomInt(minPoints, maxPoints + 1) * 100;
+}
+
+/** What the app shows before the draw: the band, not a promise of the top. */
+function dailyAppUseRangeLabel() {
+  return `${DAILY_APP_USE_MIN_POINTS_CENTAVOS / 100}–${centavosToLoyaltyPoints(
+    DAILY_APP_USE_MAX_POINTS_CENTAVOS,
+  )}`;
+}
+
 async function awardDailyLoyaltyPoints(
   db: Exec,
   input: {
@@ -445,7 +471,7 @@ async function awardDailyLoyaltyPoints(
   const rewardDate = manilaDateParts().date;
   const pointsCentavos =
     input.rewardType === "app_use"
-      ? DAILY_APP_USE_POINTS_CENTAVOS
+      ? drawDailyAppUsePointsCentavos()
       : DAILY_REFERRAL_POINTS_CENTAVOS;
   const rewardId = id("lday");
   const now = isoNow();
@@ -535,13 +561,18 @@ async function loyaltyDailyStatus(
     date,
     appUseAwarded: Boolean(appUse),
     referralAwarded: Boolean(referral),
-    appUsePoints: centavosToLoyaltyPoints(DAILY_APP_USE_POINTS_CENTAVOS),
+    // Once drawn, the status carries what was actually awarded - the award
+    // modal reads this field, so a constant here would announce the wrong
+    // number to anyone who drew below the top of the band.
+    appUsePoints: appUse
+      ? centavosToLoyaltyPoints(Number(appUse.points_centavos))
+      : dailyAppUseRangeLabel(),
     referralPoints: centavosToLoyaltyPoints(
       DAILY_REFERRAL_POINTS_CENTAVOS,
     ),
     earnedToday: centavosToLoyaltyPoints(earned),
     monthlyPotential: centavosToLoyaltyPoints(
-      (DAILY_APP_USE_POINTS_CENTAVOS +
+      (DAILY_APP_USE_MAX_POINTS_CENTAVOS +
         DAILY_REFERRAL_POINTS_CENTAVOS) *
         30,
     ),

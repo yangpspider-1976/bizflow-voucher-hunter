@@ -3,6 +3,7 @@ import { getDb, one, resetDb, run } from "@/server/db";
 import {
   businessDepositStatus,
   businessStatementPreview,
+  centavosToLoyaltyPoints,
   closeBusinessStatement,
   convertRewardCreditToVoucher,
   creditRewardFromPurchase,
@@ -24,6 +25,23 @@ import { recordReferralOpen, startHunt } from "@/server/voucher-engine";
 const phone = "+639171118888";
 const businessId = "biz_demo_restaurant";
 
+/**
+ * What today's app-use award actually paid this wallet.
+ *
+ * The award is a fresh 1-10 LP draw per Manila day, so a test that needs to
+ * know what a global balance should be reads the draw rather than assuming the
+ * top of the band.
+ */
+async function dailyAppUseCentavos(walletId: string) {
+  const row = await one(
+    await getDb(),
+    `SELECT points_centavos FROM loyalty_daily_rewards
+     WHERE wallet_id = ? AND reward_type = 'app_use'`,
+    [walletId],
+  );
+  return Number(row?.points_centavos ?? 0);
+}
+
 describe("Loyalty Points", () => {
   beforeEach(async () => {
     await resetDb();
@@ -33,14 +51,24 @@ describe("Loyalty Points", () => {
     const first = await getOrCreateRewardWallet({ phone, name: "LP User" });
     const second = await getOrCreateRewardWallet({ phone, name: "LP User" });
 
-    expect(first.balance).toBe("10 LP");
-    expect(second.balance).toBe("10 LP");
+    // The draw, not a fixed 10: what is under test is that today's award is
+    // paid exactly once, whatever it came out as.
+    const drawn = await dailyAppUseCentavos(first.wallet.id);
+    expect(drawn).toBeGreaterThanOrEqual(1_00);
+    expect(drawn).toBeLessThanOrEqual(10_00);
+    expect(drawn % 100).toBe(0);
+
+    expect(first.balance).toBe(centavosToLoyaltyPoints(drawn));
+    expect(second.balance).toBe(centavosToLoyaltyPoints(drawn));
     expect(first.appUseAwardedNow).toBe(true);
     expect(second.appUseAwardedNow).toBe(false);
     expect(second.dailyStatus).toMatchObject({
       appUseAwarded: true,
       referralAwarded: false,
-      earnedToday: "10 LP",
+      appUsePoints: centavosToLoyaltyPoints(drawn),
+      earnedToday: centavosToLoyaltyPoints(drawn),
+      // Still the ceiling the product advertises: the top of the draw plus a
+      // referral every day for a month.
       monthlyPotential: "600 LP",
     });
 
@@ -67,11 +95,11 @@ describe("Loyalty Points", () => {
       phone,
       walletSecret: first.walletSecret,
     });
-    expect(snapshot.balance).toBe("20 LP");
+    expect(snapshot.balance).toBe(centavosToLoyaltyPoints(drawn + 10_00));
     expect(snapshot.dailyStatus).toMatchObject({
       appUseAwarded: true,
       referralAwarded: true,
-      earnedToday: "20 LP",
+      earnedToday: centavosToLoyaltyPoints(drawn + 10_00),
     });
 
     const dailyRows = await one(
@@ -109,11 +137,13 @@ describe("Loyalty Points", () => {
     expect(first.rewardAmount).toBe("25 LP");
     expect(replay.idempotentReplay).toBe(true);
     expect(second.rewardAmount).toBe("25 LP");
-    // The two scans land in this partner's bucket. The once-daily 10 LP app-use
+    // The two scans land in this partner's bucket. The once-daily app-use
     // award is a global-pot credit, so the two no longer sum into one figure —
     // which is the whole point of splitting them.
     expect(second.balance).toBe("50 LP");
-    expect(second.globalBalance).toBe("10 LP");
+    expect(second.globalBalance).toBe(
+      centavosToLoyaltyPoints(await dailyAppUseCentavos(wallet.wallet.id)),
+    );
   });
 
   // The partner's two sides are netted once, at month end. Charging the 10%
@@ -453,7 +483,7 @@ describe("business Loyalty Points", () => {
   }
 
   it("earns 5% into the partner's bucket and leaves the global pot alone", async () => {
-    await earn("1,000", "business-lp-earn-basic");
+    const wallet = await earn("1,000", "business-lp-earn-basic");
     const db = await getDb();
 
     const bucket = await one(
@@ -463,10 +493,12 @@ describe("business Loyalty Points", () => {
     );
     expect(Number(bucket?.balance_centavos)).toBe(50_00);
 
-    // The daily app-use award is a global credit, so the pot is not zero — but
-    // none of the 50 LP earned at checkout is in it.
+    // The daily app-use award is a global credit, so the pot holds today's
+    // draw and nothing more — none of the 50 LP earned at checkout is in it.
     const global = await one(db, "SELECT balance_centavos FROM reward_wallets WHERE phone = ?", [phone]);
-    expect(Number(global?.balance_centavos)).toBe(10_00);
+    expect(Number(global?.balance_centavos)).toBe(
+      await dailyAppUseCentavos(wallet.wallet.id),
+    );
   });
 
   it("charges 10% to move points to the global pot", async () => {
@@ -598,7 +630,9 @@ describe("business Loyalty Points", () => {
       }),
     ]);
     // The two pots stay distinct: earning never touched the spend-anywhere one.
-    expect(opened.wallet.balanceCentavos).toBe(10_00);
+    expect(opened.wallet.balanceCentavos).toBe(
+      await dailyAppUseCentavos(opened.wallet.id),
+    );
   });
 
   // The dev tool for the bucket side. Its whole point is landing in the pot the
@@ -626,7 +660,9 @@ describe("business Loyalty Points", () => {
       expect.objectContaining({ businessId, balance: "1,500 LP" }),
     ]);
     // The global pot is untouched — it still holds only the app-use award.
-    expect(snapshot.balance).toBe("10 LP");
+    expect(snapshot.balance).toBe(
+      centavosToLoyaltyPoints(await dailyAppUseCentavos(wallet.wallet.id)),
+    );
 
     // Enough to actually buy the partner's dearest demo item, which is the
     // reason for granting directly rather than simulating a sale.

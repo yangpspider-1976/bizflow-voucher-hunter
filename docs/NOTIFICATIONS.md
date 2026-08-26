@@ -10,8 +10,8 @@ so the server needs no Firebase credentials for the default setup).
 | 3 | Held purchase approved | `rewards` | Event — an admin approves a flagged scan and the LP lands |
 | 4 | Referral converted | `rewards` | Event — someone opens a shared link and the referrer earns a spin (+10 LP) |
 
-The daily nudge is the reason this exists: `loyalty_daily_rewards` grants 10 LP
-once per Manila day and the product advertises "up to 600 LP in 30 days", which
+The daily nudge is the reason this exists: `loyalty_daily_rewards` grants a
+random 1-10 LP once per Manila day and the product advertises "up to 600 LP in 30 days", which
 only holds if the customer returns daily. Nothing else pulls them back.
 
 ## Design

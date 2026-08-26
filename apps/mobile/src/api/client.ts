@@ -399,7 +399,7 @@ export type RewardWalletSnapshot = {
   ledger: RewardLedgerEntry[];
   vouchers: RewardVoucher[];
   dailyStatus: LoyaltyDailyStatus;
-  /** True only when this request created today's 10 LP app-use award. */
+  /** True only when this request created today's app-use award. */
   appUseAwardedNow: boolean;
 };
 

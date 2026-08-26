@@ -347,6 +347,11 @@ export type LoyaltyDailyStatus = {
   date: string;
   appUseAwarded: boolean;
   referralAwarded: boolean;
+  /**
+   * Today's app-use award once it has been drawn ("7 LP"); before the draw,
+   * the band it is drawn from ("1-10 LP"). Display copy either way - nothing
+   * should parse a number back out of it.
+   */
   appUsePoints: string;
   referralPoints: string;
   earnedToday: string;

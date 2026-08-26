@@ -13,7 +13,8 @@ Implementation lives in
 
 ## Customer loop
 
-1. A signed-in customer opens the app and receives 10 LP once that day.
+1. A signed-in customer opens the app and receives a random 1-10 LP once
+   that day.
 2. A successful distinct referral adds another 10 LP once that day.
 3. Partner staff scan the customer wallet QR after a paid purchase.
 4. The customer earns 5% of the peso purchase as LP. A ₱500 purchase earns
@@ -27,7 +28,8 @@ Implementation lives in
    month.
 
 If a customer uses the app and completes one eligible referral every day for
-30 days, the daily activities can award 600 LP.
+30 days, the daily activities can award up to 600 LP - the app-use half of that
+ceiling only lands on days the draw comes up 10.
 
 ## Exact arithmetic
 
@@ -38,7 +40,7 @@ This preserves exact 5% calculations and avoids floating-point rounding:
 | Rule | Value |
 |---|---:|
 | Purchase earning rate | 5% |
-| Daily app-use award | 10 LP |
+| Daily app-use award | random 1-10 LP, whole points |
 | Daily referral award | 10 LP |
 | Daily referral limit | 1 network-wide award |
 | Minimum LP-voucher conversion | 50 LP |

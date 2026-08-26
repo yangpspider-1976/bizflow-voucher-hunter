@@ -388,11 +388,13 @@ describe("Phase 1 mobile API", () => {
     if (walletBody.success) {
       expect(walletBody.data.wallet.phone).toBe(phone);
       expect(walletBody.data.walletSecret).toMatch(/^rwsecret_/);
-      expect(walletBody.data.balance).toBe("10 LP");
+      // Today's app-use award is a 1-10 LP draw, so the balance is pinned to
+      // the band and to the status that reports it, not to a fixed figure.
+      expect(walletBody.data.balance).toMatch(/^([1-9]|10) LP$/);
       expect(walletBody.data.dailyStatus).toMatchObject({
         appUseAwarded: true,
         referralAwarded: false,
-        earnedToday: "10 LP",
+        earnedToday: walletBody.data.balance,
       });
     }
   });
