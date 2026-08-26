@@ -56,7 +56,7 @@ module.exports = {
     // Customer-visible version. `android.versionCode` is deliberately absent:
     // eas.json sets `appVersionSource: "remote"`, so EAS owns the version code
     // and bumps it per production build. Declaring it here would conflict.
-    version: "1.4.0",
+    version: "1.5.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "voucherhunt",

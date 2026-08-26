@@ -1,0 +1,11 @@
+<en-US>
+A steadier hunt, from the first tap to the prize.
+
+• Leave a hunt part-way and it resumes where you left off
+• Campaigns you have started are marked "Hunt in progress"
+• The reel shows only prizes that campaign actually offers
+• An attempt is spent when you spin, never on a reload
+• Booking offers only dates and times a slot can be taken
+• Finished campaigns stay listed, marked no longer available
+• Campaign details show the full offer and the right category
+</en-US>
