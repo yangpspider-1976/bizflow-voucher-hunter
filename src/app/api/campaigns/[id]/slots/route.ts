@@ -3,6 +3,7 @@ import { assertBusinessAccess, requireAdmin } from "@/server/auth";
 import { createSlot, getCampaign, listSlots } from "@/server/admin";
 import { requestCampaignChange } from "@/server/change-requests";
 import { fail, ok } from "@/server/errors";
+import { MAX_SLOT_CAPACITY } from "@/lib/limits";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ const schema = z.object({
   endTime: z.string().regex(timePattern, "endTime must be HH:MM"),
   timezone: z.string().optional(),
   branchId: z.string().optional(),
-  totalCapacity: z.number().int().min(1),
+  totalCapacity: z.number().int().min(1).max(MAX_SLOT_CAPACITY),
   status: z.enum(["active", "sold_out", "closed", "paused"]).optional()
 });
 

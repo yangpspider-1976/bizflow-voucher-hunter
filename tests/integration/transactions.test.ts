@@ -91,9 +91,11 @@ describe("dashboard transactions", () => {
 
   it("survives a sale too large for the pesos column to multiply", async () => {
     await seedTransactions();
-    // `redemption_logs.purchase_amount` is int4 and holds pesos, so a sale this
-    // size stores fine and only overflows on the way to centavos. One such row
-    // used to 500 the whole page: both the list and the totals run the union.
+    // Written straight to the column because the checkout will no longer accept
+    // a figure this size — the rows that predate that limit are still on the
+    // books, and the page has to render them. `purchase_amount` is int4 pesos,
+    // so a sale this large stores fine and only overflows on the way to
+    // centavos, which used to 500 the page: list and totals share the union.
     await run(await getDb(), "UPDATE redemption_logs SET purchase_amount = ?", [
       2_000_000_000,
     ]);

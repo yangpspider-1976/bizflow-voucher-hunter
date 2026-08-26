@@ -4,6 +4,7 @@ import { assertBusinessAccess, requireAdmin } from "@/server/auth";
 import { createPool, getCampaign, listPools } from "@/server/admin";
 import { requestCampaignChange } from "@/server/change-requests";
 import { fail, ok } from "@/server/errors";
+import { MAX_MONEY_PESOS, MAX_POOL_QUANTITY } from "@/lib/limits";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +12,9 @@ const schema = z.object({
   benefitType: z.enum(["discount_percent", "fixed_amount", "free_item", "free_shipping"]),
   benefitValue: z.string().min(1),
   displayLabel: z.string().min(1),
-  totalQuantity: z.number().int().min(1),
+  totalQuantity: z.number().int().min(1).max(MAX_POOL_QUANTITY),
   rarity: z.enum(["standard", "rare", "epic", "legendary"]),
-  minimumSpend: z.number().int().min(0).optional(),
+  minimumSpend: z.number().int().min(0).max(MAX_MONEY_PESOS).optional(),
   restriction: z.string().optional(),
   status: z.enum(["active", "paused", "depleted"]).optional(),
   slotIds: z.array(z.string()).optional()

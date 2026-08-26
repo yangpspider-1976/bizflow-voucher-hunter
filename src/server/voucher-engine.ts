@@ -3,6 +3,7 @@ import type { Client, Transaction } from "@/server/pg-driver";
 import { generateQrToken, generateVoucherCode } from "@/server/codes";
 import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
+import { MAX_MONEY_DISPLAY, MAX_MONEY_PESOS } from "@/lib/limits";
 import {
   addCalendarDays,
   all,
@@ -1255,7 +1256,27 @@ export function validateVoucher(input: { codeOrToken: string }) {
   });
 }
 
+/**
+ * The bill a checkout typed, in pesos, as `redemption_logs` stores it.
+ *
+ * That column is int4, and every reader scales it to centavos, which costs two
+ * more digits — so the bound that matters is well below what the column alone
+ * would take. Rejected here rather than only in the route schema because the
+ * CSV import reaches the same column by a different door.
+ */
+function assertPurchaseAmountInRange(amount: number | undefined) {
+  if (amount === undefined) return;
+  if (!Number.isFinite(amount) || amount < 0 || amount > MAX_MONEY_PESOS) {
+    throw new AppError(
+      "E-PURCHASE-AMOUNT-RANGE",
+      `The purchase amount must be between 0 and ${MAX_MONEY_DISPLAY}`,
+      400,
+    );
+  }
+}
+
 export async function redeemVoucher(input: { codeOrToken: string; staffName: string; purchaseAmount?: number; note?: string }) {
+  assertPurchaseAmountInRange(input.purchaseAmount);
   let earner: { phone: string; businessId: string; voucherId: string } | undefined;
   await withTx(async (tx) => {
     const voucher = await loadVoucherContext(tx, input.codeOrToken);
@@ -1784,7 +1805,7 @@ export function rescheduleReservation(input: { codeOrToken: string; newSlotId: s
 
 export type RedemptionImportRow = {
   code: string;
-  status: "redeemed" | "already_redeemed" | "expired" | "not_found";
+  status: "redeemed" | "already_redeemed" | "expired" | "not_found" | "amount_out_of_range";
 };
 
 /**
@@ -1806,6 +1827,13 @@ export async function importRedemptions(input: { campaignId: string; csv: string
     if (!code || header === "voucher_code" || header === "code") continue; // skip header row
     const amountRaw = cells[1] ? Number(cells[1]) : undefined;
     const amount = amountRaw !== undefined && Number.isFinite(amountRaw) ? amountRaw : undefined;
+    // Reported rather than thrown: one bad cell should cost that row, not the
+    // rest of the batch. Dropping the amount and redeeming anyway would be
+    // worse than either — the voucher would be spent and the bill lost.
+    if (amount !== undefined && (amount < 0 || amount > MAX_MONEY_PESOS)) {
+      results.push({ code, status: "amount_out_of_range" });
+      continue;
+    }
 
     const row = await one(db, "SELECT * FROM vouchers WHERE (UPPER(voucher_code) = ? OR UPPER(qr_token) = ?) AND campaign_id = ?", [
       code.toUpperCase(),

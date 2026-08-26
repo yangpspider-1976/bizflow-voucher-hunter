@@ -18,6 +18,7 @@ import {
 } from "react-icons/fi";
 import type { IScannerControls } from "@zxing/browser";
 import { ApiError, api } from "@/lib/api-client";
+import { MAX_MONEY_PESOS } from "@/lib/limits";
 import { toDisplayPhone } from "@/lib/phone-display";
 import type { Campaign, CampaignSlot, EndUser, Voucher } from "@/types/voucher";
 import { SelectMenu } from "../_components/SelectMenu";
@@ -655,6 +656,11 @@ export default function StaffPage() {
                     onChange={(event) => setPurchaseAmount(event.target.value)}
                     placeholder="0.00"
                     type="number"
+                    min={0}
+                    // The server refuses anything above this. Saying so on the
+                    // field is the difference between a typo caught while it is
+                    // still being typed and a rejected redemption at a counter.
+                    max={MAX_MONEY_PESOS}
                   />
                   {belowMinimumSpend ? (
                     <small className="alert" role="alert">

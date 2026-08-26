@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { assertBusinessAccess, requireAdmin } from "@/server/auth";
 import { AppError, fail, ok } from "@/server/errors";
+import { MAX_MONEY_PESOS } from "@/lib/limits";
 import { redeemVoucher, validateVoucher } from "@/server/voucher-engine";
 
 const schema = z.object({
   codeOrToken: z.string().min(3),
-  purchaseAmount: z.coerce.number().min(0).optional(),
+  // Bounded here as well as in the engine so a slipped keyboard is answered by
+  // the field that took it, rather than by whatever reads the column later.
+  purchaseAmount: z.coerce.number().min(0).max(MAX_MONEY_PESOS).optional(),
   note: z.string().optional()
 });
 

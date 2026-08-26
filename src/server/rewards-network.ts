@@ -4,6 +4,7 @@ import { generateVoucherCode } from "@/server/codes";
 import { all, batchAll, getDb, one, run, withTx } from "@/server/db";
 import { assertDevToolsEnabled, devToolsEnabled } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
+import { MAX_MONEY_CENTAVOS, MAX_MONEY_DISPLAY } from "@/lib/limits";
 import { normalizePhone } from "@/server/phone";
 import type {
   LoyaltyDailyStatus,
@@ -117,10 +118,31 @@ const isoNow = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
 const token = (prefix: string) => `${prefix}_${crypto.randomBytes(18).toString("base64url")}`;
 
+/**
+ * The ceiling every parsed amount passes, whichever route it arrived on.
+ *
+ * Here rather than in the route schemas because this is the one funnel they all
+ * share — purchases, transfers, deposits, item prices and dev grants each parse
+ * through it, and a cap repeated in eight zod schemas is a cap that drifts.
+ *
+ * Measured on the magnitude: deposit adjustments are signed, and a mistyped
+ * debit overflows the column exactly as readily as a credit does.
+ */
+function assertWithinMoneyLimit(centavos: number, fieldName: string) {
+  if (Math.abs(centavos) > MAX_MONEY_CENTAVOS) {
+    throw new AppError(
+      "E-MONEY-TOO-LARGE",
+      `The ${fieldName} must be less than ${MAX_MONEY_DISPLAY}`,
+      400,
+    );
+  }
+  return centavos;
+}
+
 export function moneyToCentavos(value: unknown, fieldName = "amount") {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new AppError("E-MONEY-INVALID", `Invalid ${fieldName}`, 400);
-    return Math.round(value * 100);
+    return assertWithinMoneyLimit(Math.round(value * 100), fieldName);
   }
 
   if (typeof value !== "string") {
@@ -132,7 +154,10 @@ export function moneyToCentavos(value: unknown, fieldName = "amount") {
     throw new AppError("E-MONEY-INVALID", `Invalid ${fieldName}`, 400);
   }
   const [whole, decimals = ""] = trimmed.split(".");
-  return Number(whole) * 100 + Number(decimals.padEnd(2, "0"));
+  return assertWithinMoneyLimit(
+    Number(whole) * 100 + Number(decimals.padEnd(2, "0")),
+    fieldName,
+  );
 }
 
 export function centavosToMoney(amountCentavos: number) {
