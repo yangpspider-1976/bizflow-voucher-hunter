@@ -12,9 +12,11 @@ import { apiRequest, type RoulettePreview } from "@/api/client";
  * session (`useAuth().devTools`) instead.
  *
  * The two are not equivalent: a dev build may use everything below, while the
- * production developer account gets only the self-scoped hunt tools. The LP and
- * partner-checkout helpers refuse in production for every account, so the panel
- * hides them rather than offering a button that always 403s.
+ * production developer account gets the self-scoped tools only — the hunt
+ * helpers plus the two LP grants, which mint points but bill nobody. The
+ * partner-checkout helpers do bill a real partner and refuse in production for
+ * every account, so the panel hides them rather than offering a button that
+ * always 403s.
  */
 export const devBuild = __DEV__;
 
@@ -106,7 +108,8 @@ export type DevLoyaltyGrant = {
  * scan a purchase, which is impractical when testing the storefront — the
  * cheapest demo item costs 150 LP and a day's app-use award is 10.
  *
- * Refused server-side outside development.
+ * Server-side this is gated per caller, so the production developer account may
+ * fund its own wallet; everyone else is refused outside a dev deployment.
  */
 export function grantLoyaltyPoints(
   amount: string,
@@ -130,7 +133,7 @@ export type DevBusinessGrant = {
 /**
  * Tops one partner's bucket up directly, which is what the storefront spends.
  * `grantLoyaltyPoints` funds the global pot instead, and the two are not
- * interchangeable.
+ * interchangeable — which is why both are offered, and both carry the same gate.
  */
 export function grantBusinessLoyaltyPoints(
   input: { businessId: string; amount: string },

@@ -2,9 +2,13 @@ import { AppError } from "@/server/errors";
 import { normalizePhone } from "@/server/phone";
 
 /**
- * The single gate for every tool that mints value, forces an outcome, or bypasses
- * a real rule: LP grants, forced roulette pools, hunt resets, statement
+ * The deployment-wide gate for every tool that mints value, forces an outcome, or
+ * bypasses a real rule: LP grants, forced roulette pools, hunt resets, statement
  * backdating, the bootstrap login fallback, and the OTP code echo.
+ *
+ * Some of those are additionally reachable by a named developer account in
+ * production — see `devToolsEnabledFor`. This function answers only the
+ * deployment half of the question.
  *
  * Fails closed. The previous gate was `process.env.NODE_ENV !== "production"`,
  * which is only safe when NODE_ENV is guaranteed to be exactly "production" in
@@ -27,7 +31,11 @@ export function devToolsEnabled() {
   return process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 }
 
-/** Guard for a route or server function that must never run against real money. */
+/**
+ * Guard for a route or server function that must never run in production at all,
+ * whoever is asking. Use `assertDevToolsEnabledFor` for the self-scoped tools a
+ * developer account carries into production.
+ */
 export function assertDevToolsEnabled(what: string) {
   if (devToolsEnabled()) return;
   throw new AppError("E-DEV-ONLY", `${what} is a development-only tool`, 403);
@@ -61,12 +69,20 @@ export const DEV_ACCOUNT_ENV_PAIRS = [
  *   POST /api/public/hunt/reset                clears its own hunt, returns stock
  *   POST /api/public/hunt/dev-refresh-vouchers re-dates its own bookings
  *   devPoolId on /api/public/hunt/attempt      forces its own next draw
+ *   POST /api/public/rewards/dev-credit        funds its own global LP pot
+ *   POST /api/public/rewards/dev-business-credit funds its own partner bucket
  *
- * Every one of those is scoped to the caller's own phone and is reversible.
- * Deliberately NOT included are the tools that move money — LP grants, simulated
- * checkout scans, simulated collection — because those write rows a real partner is
- * billed for. They stay on `devToolsEnabled()` and refuse in production for
- * everyone, these accounts included.
+ * Every one of those is scoped to the caller's own phone. The two LP grants mint
+ * spendable balance, so they are the weightiest thing on the list, but they bill
+ * nobody: the ledger entry is a `dev_grant` against this wallet and no partner
+ * statement moves. Testing the shop against live data needs them — the global pot
+ * and a partner bucket buy different things, and a 5% earn rate cannot reach a
+ * 1,200 LP item without a fictional ₱24,000 sale.
+ *
+ * Deliberately still NOT included are the tools that put a real partner on the
+ * hook — the simulated checkout scan and the simulated collection — because those
+ * write rows a partner is billed for. They stay on `devToolsEnabled()` and refuse
+ * in production for everyone, these accounts included.
  *
  * A slot is inert unless its var is set to a valid PH mobile number, and it
  * grants no admin/dashboard rights: these are ordinary customer accounts with the
@@ -92,8 +108,10 @@ function isDevAccountPhone(phone: string | null | undefined): boolean {
 }
 
 /**
- * The hunt-tool gate: open where the whole deployment is a dev environment, or
- * for a configured developer account anywhere — including production.
+ * The self-scoped-tool gate: open where the whole deployment is a dev
+ * environment, or for a configured developer account anywhere — including
+ * production. Callers must pass the phone the tool will act on, so what it opens
+ * is always that account's own rows.
  */
 export function devToolsEnabledFor(phone: string | null | undefined): boolean {
   return devToolsEnabled() || isDevAccountPhone(phone);
@@ -111,7 +129,7 @@ export function devToolsPossible(): boolean {
   return devToolsEnabled() || devAccountPhones().length > 0;
 }
 
-/** Guard for a self-scoped hunt tool the developer account may run in production. */
+/** Guard for a self-scoped tool the developer account may run in production. */
 export function assertDevToolsEnabledFor(phone: string | null | undefined, what: string) {
   if (devToolsEnabledFor(phone)) return;
   throw new AppError("E-DEV-ONLY", `${what} is a development-only tool`, 403);

@@ -7,10 +7,15 @@ import {
 } from "@/server/dev-tools";
 import { requestSignInOtp, verifySignInOtp } from "@/server/otp";
 import { clientIp } from "@/server/rate-limit";
-import { grantDevLoyaltyPoints } from "@/server/rewards-network";
+import {
+  grantDevBusinessLoyaltyPoints,
+  grantDevLoyaltyPoints,
+} from "@/server/rewards-network";
 import { POST as requestOtpRoute } from "@/app/api/public/signin/request-otp/route";
 import { POST as verifyOtpRoute } from "@/app/api/public/signin/verify-otp/route";
 import { POST as loginRoute } from "@/app/api/auth/login/route";
+import { POST as devPurchaseRoute } from "@/app/api/public/rewards/dev-purchase/route";
+import { POST as devCollectRoute } from "@/app/api/public/rewards/dev-collect/route";
 
 const PHONE = "+639170001111";
 
@@ -210,9 +215,10 @@ describe("dev-only tooling gate", () => {
   });
 });
 
-// A handful of customer numbers carry the self-scoped hunt tools into
-// production, where the deployment-wide gate above can never open. Everything
-// that moves money stays shut for them.
+// A handful of customer numbers carry the self-scoped tools into production,
+// where the deployment-wide gate above can never open. That covers the hunt
+// helpers and the two LP grants, which touch only the caller's own wallet.
+// Anything that bills a real partner stays shut for them.
 describe("production developer account", () => {
   const DEV_PHONE = "+639614073159";
 
@@ -273,11 +279,41 @@ describe("production developer account", () => {
     expect(devToolsEnabledFor(DEV_PHONE)).toBe(false);
   });
 
-  it("still refuses to mint Loyalty Points for the developer account", async () => {
-    // The line between the two tiers: resetting a hunt returns stock this
-    // number is holding, while LP is spendable balance a partner is billed for.
+  it("opens both LP grants for its own wallet in production", () => {
+    // Global pot and partner bucket buy different things, so the shop is only
+    // half testable if one of them is shut. Both mint points without writing a
+    // partner liability, which is what puts them on this side of the line.
+    expect(devToolsEnabled()).toBe(false);
+    expect(() =>
+      assertDevToolsEnabledFor(DEV_PHONE, "Granting Loyalty Points"),
+    ).not.toThrow();
+  });
+
+  it("still refuses to mint Loyalty Points for every other customer", async () => {
     await expect(
-      grantDevLoyaltyPoints({ phone: DEV_PHONE, amount: "500" }),
+      grantDevLoyaltyPoints({ phone: PHONE, amount: "500" }),
     ).rejects.toMatchObject({ code: "E-DEV-ONLY" });
+    await expect(
+      grantDevBusinessLoyaltyPoints({
+        phone: PHONE,
+        businessId: "biz_dev_tools_test",
+        amount: "500",
+      }),
+    ).rejects.toMatchObject({ code: "E-DEV-ONLY" });
+  });
+
+  it("still refuses the tools that bill a partner, this account included", async () => {
+    // The line between the two tiers: a grant moves this wallet's own balance,
+    // while a simulated scan or collection writes rows a real partner is
+    // invoiced for. Those refuse before they ever look at who is asking.
+    for (const route of [devPurchaseRoute, devCollectRoute]) {
+      // The gate runs before rate limiting and before the session lookup, so an
+      // empty body never gets that far.
+      const response = await route(
+        jsonRequest("https://example.test/api/public/rewards/dev", {}),
+      );
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe("E-DEV-ONLY");
+    }
   });
 });

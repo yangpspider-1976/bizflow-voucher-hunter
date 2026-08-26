@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import type { Client, Transaction } from "@/server/pg-driver";
 import { generateVoucherCode } from "@/server/codes";
 import { all, batchAll, getDb, one, run, withTx } from "@/server/db";
-import { assertDevToolsEnabled, devToolsEnabled } from "@/server/dev-tools";
+import {
+  assertDevToolsEnabled,
+  assertDevToolsEnabledFor,
+  devToolsEnabled,
+} from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
 import { MAX_MONEY_CENTAVOS, MAX_MONEY_DISPLAY } from "@/lib/limits";
 import { normalizePhone } from "@/server/phone";
@@ -2484,16 +2488,19 @@ export async function purchaseRewardProduct(input: {
 }
 
 /**
- * Tops a wallet up with Loyalty Points, for development only.
+ * Tops a wallet up with Loyalty Points, for the dev tools.
  *
  * Earning LP legitimately means a partner scanning a purchase, which puts a
  * matching liability on that partner's statement. This grants points with no
- * purchase behind them, so nothing is billed to anyone — which is exactly why
- * it must never run in production, and why the ledger entry is labelled as a
- * grant rather than dressed up as a purchase.
+ * purchase behind them, so nothing is billed to anyone — which is why the
+ * ledger entry is labelled as a grant rather than dressed up as a purchase.
+ *
+ * Gated per caller, not per deployment: a dev environment opens it for everyone,
+ * and a configured developer account carries it into production for its own
+ * wallet. Nobody else can reach it anywhere.
  */
 /**
- * Development-only: tops a partner's bucket up directly.
+ * Dev-tools helper: tops a partner's bucket up directly.
  *
  * The counterpart to `grantDevLoyaltyPoints`, which credits the global pot. The
  * two pots buy different things — a bucket buys that partner's storefront items,
@@ -2502,16 +2509,19 @@ export async function purchaseRewardProduct(input: {
  *
  * A simulated purchase already funds one, but only at 5% of the amount entered:
  * reaching a 1,200 LP item that way means posting a ₱24,000 sale. This sets the
- * balance directly instead. Nothing is billed to the partner, which is exactly
- * why it must never run in production, and why the ledger entry is labelled a
- * grant rather than dressed up as a purchase.
+ * balance directly instead. Nothing is billed to the partner, which is why the
+ * ledger entry is labelled a grant rather than dressed up as a purchase.
+ *
+ * Carries the same per-caller gate as `grantDevLoyaltyPoints`, so the pair stays
+ * usable together: funding one pot without the other leaves half the shop
+ * untestable.
  */
 export async function grantDevBusinessLoyaltyPoints(input: {
   phone: string;
   businessId: string;
   amount: string | number;
 }) {
-  assertDevToolsEnabled("Granting Loyalty Points");
+  assertDevToolsEnabledFor(input.phone, "Granting Loyalty Points");
   return withTx(async (tx) => {
     const wallet = await walletByPhone(tx, requireWalletPhone(input.phone));
     if (!wallet) {
@@ -2595,7 +2605,7 @@ export async function grantDevLoyaltyPoints(input: {
   phone: string;
   amount: string | number;
 }) {
-  assertDevToolsEnabled("Granting Loyalty Points");
+  assertDevToolsEnabledFor(input.phone, "Granting Loyalty Points");
   return withTx(async (tx) => {
     const wallet = await walletByPhone(tx, requireWalletPhone(input.phone));
     if (!wallet) {

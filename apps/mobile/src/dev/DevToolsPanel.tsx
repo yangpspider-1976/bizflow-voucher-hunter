@@ -35,13 +35,22 @@ import { colors, fonts, radius, spacing } from "@/theme";
  * selector first and then applies both tools to whichever campaign is picked.
  *
  * Renders nothing unless this is a dev build or the session says the signed-in
- * number is the production developer account. The money-moving tools show only
- * on a dev build — see `@/dev/devTools`.
+ * number is the production developer account. The developer account gets the
+ * self-scoped tools, LP grants included; only the two that bill a real partner
+ * are held back to a dev build — see `@/dev/devTools`.
  */
 export function DevToolsPanel() {
   const { devTools, token } = useAuth();
   const visible = devBuild || devTools;
-  const rewardToolsVisible = devBuild;
+  // Funding a wallet mints LP but bills nobody, so the developer account keeps
+  // it in production — which today is everyone who sees this panel at all.
+  // Named separately anyway: `visible` answers whether the panel belongs on the
+  // More tab, this answers who may mint, and the two coincide only because the
+  // server happens to draw its line in the same place.
+  const lpToolsVisible = visible;
+  // Simulating a checkout scan or a collection does bill a real partner, so
+  // those stay on a dev build — see `@/dev/devTools`.
+  const billingToolsVisible = devBuild;
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignCard[]>([]);
   const [slug, setSlug] = useState("");
@@ -357,11 +366,10 @@ export function DevToolsPanel() {
         start.
       </Text>
 
-      {/* Everything below moves Loyalty Points, and LP is money a partner is
-          billed for. The server refuses these in production for every account,
-          so they are a dev build only — showing them to the production
-          developer account would only offer buttons that always fail. */}
-      {rewardToolsVisible ? (
+      {/* Both grants below mint Loyalty Points out of nothing, but neither puts
+          the amount on a partner's statement, so the server allows them for the
+          developer account in production against its own wallet. */}
+      {lpToolsVisible ? (
         <>
           <View style={styles.divider} />
 
@@ -422,11 +430,18 @@ export function DevToolsPanel() {
           </Button>
           <Text style={styles.copy}>
             Puts LP straight into one partner&apos;s bucket — the balance its
-            storefront items are bought with. The simulated purchase below funds
-            the same bucket but only at 5%, so a 1,200 LP item needs a ₱24,000
-            sale; this sets it directly. No partner is billed either way.
+            storefront items are bought with. A real checkout scan funds the same
+            bucket at only 5%, so a 1,200 LP item needs a ₱24,000 sale; this sets
+            it directly. No partner is billed either way.
           </Text>
+        </>
+      ) : null}
 
+      {/* These two do bill a real partner — one writes the liability, the other
+          settles it — so the server refuses them in production for every
+          account. Hidden rather than offered as buttons that always 403. */}
+      {billingToolsVisible ? (
+        <>
           <View style={styles.divider} />
 
           <Text style={styles.label}>Simulate a purchase at a partner</Text>
