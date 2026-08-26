@@ -46,6 +46,13 @@ export default function LpProductScreen() {
     ? params.businessId[0]
     : params.businessId;
 
+  // Up is the storefront, whichever of this screen's states is showing.
+  // dismissTo rather than back() or replace(): it pops to the storefront
+  // already in the stack instead of stacking a second copy of it, and still
+  // gets there when the item was opened without one below it.
+  const backToStorefront = () =>
+    router.dismissTo(`/shop/${encodeURIComponent(businessId)}` as Href);
+
   const [product, setProduct] = useState<RewardProduct | null>(null);
   const [wallet, setWallet] = useState<RewardWalletSnapshot | null>(null);
   const [receipt, setReceipt] = useState<RewardProductPurchase | null>(null);
@@ -110,7 +117,7 @@ export default function LpProductScreen() {
   if (error || !product) {
     return (
       <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
-        <StepHeader onBack={() => router.back()} title={t("shop.title")} />
+        <StepHeader onBack={backToStorefront} title={t("shop.title")} />
         <View style={styles.content}>
           <ErrorState
             error={error}
@@ -125,12 +132,7 @@ export default function LpProductScreen() {
   if (receipt) {
     return (
       <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
-        <StepHeader
-          onBack={() =>
-            router.replace(`/shop/${encodeURIComponent(businessId)}` as Href)
-          }
-          title={t("shop.receiptTitle")}
-        />
+        <StepHeader onBack={backToStorefront} title={t("shop.receiptTitle")} />
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -194,7 +196,7 @@ export default function LpProductScreen() {
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
-      <StepHeader onBack={() => router.back()} title={t("shop.confirmTitle")} />
+      <StepHeader onBack={backToStorefront} title={t("shop.confirmTitle")} />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}

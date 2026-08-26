@@ -151,7 +151,16 @@ export default function ShopProductsScreen() {
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
-      <StepHeader onBack={() => router.back()} title={businessName} />
+      {/* dismissTo, not back(): this screen's parent is the shop, but the
+          history above it is not dependable — returning here from an item after
+          a purchase replaces that screen, so back() lands on the storefront
+          again rather than leaving it. dismissTo pops to the shop wherever it
+          sits, and falls back to navigating there when it is not in the stack
+          at all (a deep link, or a jump in from outside the shop). */}
+      <StepHeader
+        onBack={() => router.dismissTo("/shop")}
+        title={businessName}
+      />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={

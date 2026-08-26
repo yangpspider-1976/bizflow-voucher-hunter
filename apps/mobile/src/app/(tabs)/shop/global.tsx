@@ -105,8 +105,9 @@ export default function GlobalRewardsScreen() {
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+      {/* Up is the shop, not wherever the history happens to lead. */}
       <StepHeader
-        onBack={() => router.back()}
+        onBack={() => router.dismissTo("/shop")}
         title={t("shop.globalStoreTitle")}
       />
       <ScrollView
