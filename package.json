@@ -18,6 +18,8 @@
     "test:e2e": "playwright test",
     "mobile": "npm run start --workspace @voucher-hunt/mobile",
     "mobile:android": "npm run android --workspace @voucher-hunt/mobile",
+    "emulator:dev": "node --env-file-if-exists=apps/mobile/.env --env-file-if-exists=apps/mobile/.env.local apps/mobile/scripts/emulator.js dev",
+    "emulator:prod": "node --env-file-if-exists=apps/mobile/.env --env-file-if-exists=apps/mobile/.env.local apps/mobile/scripts/emulator.js prod",
     "mobile:typecheck": "npm run typecheck --workspace @voucher-hunt/mobile",
     "sms:logs": "node --env-file=.env scripts/sms-logs.mjs",
     "start:smpp-worker": "node server/smpp-worker.cjs",

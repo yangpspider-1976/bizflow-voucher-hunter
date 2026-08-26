@@ -53,18 +53,27 @@ restriction.
 
 ## Run
 
-From the repository root:
+From the repository root, pick the backend the emulator should talk to:
 
 ```bash
-npm run dev
-npm run mobile
+npm run emulator:dev    # against the local Next server (run `npm run dev` first)
+npm run emulator:prod   # against https://voucher-hunt.com
 ```
 
-In the Expo terminal, press `a` to open Android. You can also run:
+Both start Metro, open the Android emulator, and pin `EXPO_PUBLIC_API_BASE_URL`
+for that session, so switching targets does not mean editing `.env.local`. They
+clear the Metro cache on every start, because `EXPO_PUBLIC_*` values are inlined
+into the bundle and a warm cache serves the previous target's URL.
+
+They open the development build, which must be installed on the emulator once
+(and again whenever native configuration changes):
 
 ```bash
 npm run mobile:android
 ```
+
+To start Metro without choosing a target — taking whatever `.env.local` holds —
+use `npm run mobile` and press `a` in the Expo terminal.
 
 ## Phase 2 behavior
 
