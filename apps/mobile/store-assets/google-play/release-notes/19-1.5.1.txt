@@ -1,0 +1,7 @@
+<en-US>
+A fix for signing in as someone else on the same phone.
+
+• Signing out now clears the hunt progress left on the device
+• A campaign you have not started offers a fresh hunt, not "Continue"
+• Notification settings now say the daily bonus is up to 10 LP
+</en-US>
