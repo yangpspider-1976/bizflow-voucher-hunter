@@ -4,11 +4,26 @@
 // who joins three campaigns has three rows. Everything here groups by phone,
 // because "this person's activity" is the question the dashboard is asking.
 
-import { all, getDb, one } from "@/server/db";
+import { all, getDb, one, type Exec } from "@/server/db";
 import { AppError } from "@/server/errors";
 import type { VoucherStatus } from "@/types/voucher";
 
 type Row = Record<string, any>;
+
+/**
+ * One partner's Loyalty Points, held against that business.
+ *
+ * A row exists from the first time the customer earned at that partner, so a
+ * zero balance reads as "spent it", not "never earned there" — which is why the
+ * lifetime figures travel alongside the balance.
+ */
+export type CustomerPartnerBalance = {
+  businessId: string;
+  businessName: string;
+  balanceCentavos: number;
+  lifetimeEarnedCentavos: number;
+  lifetimeTransferredCentavos: number;
+};
 
 export type CustomerSummary = {
   phone: string;
@@ -18,8 +33,15 @@ export type CustomerSummary = {
   campaignCount: number;
   voucherCount: number;
   redeemedCount: number;
-  /** Loyalty balance in centavos, when this phone has a wallet. */
+  /**
+   * The global pot in centavos, when this phone has a wallet — the balance
+   * daily rewards and referrals credit, and the only one convertible to a
+   * spend-anywhere voucher. Points earned at a checkout are not in here; they
+   * are in `partnerBalances`.
+   */
   loyaltyBalanceCentavos?: number;
+  /** Every partner bucket this customer holds, richest first; empty when none. */
+  partnerBalances: CustomerPartnerBalance[];
   firstSeenAt: string;
   lastActivityAt: string;
 };
@@ -56,12 +78,18 @@ export type CustomerDetail = {
 };
 
 /**
- * Restricts results to the campaigns a session may see.
+ * Restricts results to the businesses a session may see.
  *
  * Staff are bound to their own businesses; admins see everything. Returning the
- * fragment plus its arguments keeps the two call sites from drifting apart.
+ * fragment plus its arguments keeps the call sites from drifting apart.
+ *
+ * `column` names the column carrying the owning business: the campaign for the
+ * activity queries, the partner for a Loyalty Points bucket.
  */
-function businessScope(session: { role: string; businessIds: string[] }) {
+function businessScope(
+  session: { role: string; businessIds: string[] },
+  column = "c.business_id",
+) {
   if (session.role !== "staff") return { clause: "", args: [] as string[] };
   const ids = session.businessIds.filter((id) => id !== "*");
   if (ids.length === 0) {
@@ -69,9 +97,62 @@ function businessScope(session: { role: string; businessIds: string[] }) {
     return { clause: " AND 1 = 0", args: [] as string[] };
   }
   return {
-    clause: ` AND c.business_id IN (${ids.map(() => "?").join(", ")})`,
+    clause: ` AND ${column} IN (${ids.map(() => "?").join(", ")})`,
     args: ids,
   };
+}
+
+/**
+ * Per-partner Loyalty Points for a set of customers, keyed by phone.
+ *
+ * `reward_wallets.balance_centavos` is only the global pot. Points earned at a
+ * checkout are credited to `reward_business_balances` against the partner that
+ * issued them, so reading the wallet alone shows a customer holding 800 LP
+ * across three partners as having nothing.
+ *
+ * Scoped like every other query here: staff see the buckets held at their own
+ * businesses and never a customer's balance at a competitor.
+ */
+async function partnerBalancesByPhone(
+  db: Exec,
+  phones: string[],
+  session: { role: string; businessIds: string[] },
+): Promise<Map<string, CustomerPartnerBalance[]>> {
+  const byPhone = new Map<string, CustomerPartnerBalance[]>();
+  if (phones.length === 0) return byPhone;
+
+  const scope = businessScope(session, "rbb.business_id");
+  const rows = await all(
+    db,
+    `SELECT
+       w.phone AS phone,
+       b.id AS business_id,
+       b.name AS business_name,
+       rbb.balance_centavos AS balance_centavos,
+       rbb.lifetime_earned_centavos AS lifetime_earned_centavos,
+       rbb.lifetime_transferred_centavos AS lifetime_transferred_centavos
+     FROM reward_business_balances rbb
+     JOIN reward_wallets w ON w.id = rbb.wallet_id
+     JOIN businesses b ON b.id = rbb.business_id
+     WHERE w.phone IN (${phones.map(() => "?").join(", ")})${scope.clause}
+     ORDER BY rbb.balance_centavos DESC, b.name`,
+    [...phones, ...scope.args],
+  );
+
+  for (const row of rows) {
+    const phone = String(row.phone);
+    const bucket: CustomerPartnerBalance = {
+      businessId: String(row.business_id),
+      businessName: String(row.business_name),
+      balanceCentavos: Number(row.balance_centavos ?? 0),
+      lifetimeEarnedCentavos: Number(row.lifetime_earned_centavos ?? 0),
+      lifetimeTransferredCentavos: Number(row.lifetime_transferred_centavos ?? 0),
+    };
+    const held = byPhone.get(phone);
+    if (held) held.push(bucket);
+    else byPhone.set(phone, [bucket]);
+  }
+  return byPhone;
 }
 
 export async function listCustomers(
@@ -134,10 +215,19 @@ export async function listCustomers(
     [...scope.args, ...searchArgs, ...scope.args, ...searchArgs],
   );
 
-  return rows.map(mapSummary);
+  // One extra query for the whole page rather than a join in the aggregate
+  // above: a customer holds one bucket per partner, so joining them in would
+  // multiply the voucher rows the COUNT(DISTINCT)s run over.
+  const partners = await partnerBalancesByPhone(
+    db,
+    rows.map((row) => String(row.phone)),
+    session,
+  );
+
+  return rows.map((row) => mapSummary(row, partners.get(String(row.phone)) ?? []));
 }
 
-function mapSummary(row: Row): CustomerSummary {
+function mapSummary(row: Row, partnerBalances: CustomerPartnerBalance[]): CustomerSummary {
   return {
     phone: String(row.phone),
     name: row.name ?? undefined,
@@ -149,6 +239,7 @@ function mapSummary(row: Row): CustomerSummary {
       row.loyalty_balance_centavos === null || row.loyalty_balance_centavos === undefined
         ? undefined
         : Number(row.loyalty_balance_centavos),
+    partnerBalances,
     firstSeenAt: String(row.first_seen_at),
     lastActivityAt: String(row.last_activity_at),
   };
@@ -183,6 +274,8 @@ export async function getCustomer(
   // Staff querying someone who only ever used another business's campaigns get
   // the same 404 as a phone that does not exist: the scope must not be probeable.
   if (!summaryRow) throw new AppError("E-CUSTOMER-404", "Customer not found", 404);
+
+  const partnerBalances = (await partnerBalancesByPhone(db, [phone], session)).get(phone) ?? [];
 
   // The latest non-empty name/email wins: a customer can type a different name
   // per campaign, and the most recent is the best guess at what to call them.
@@ -245,7 +338,7 @@ export async function getCustomer(
 
   return {
     summary: {
-      ...mapSummary(summaryRow),
+      ...mapSummary(summaryRow, partnerBalances),
       name: identityRow?.name || undefined,
       email: identityRow?.email || undefined,
     },

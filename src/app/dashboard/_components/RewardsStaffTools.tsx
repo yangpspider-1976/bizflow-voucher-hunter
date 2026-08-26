@@ -8,11 +8,23 @@ import type { Business } from "@/types/voucher";
 
 type CreditResult = {
   rewardAmount: string;
+  /** What the customer holds *at this business* — the pot the award lands in. */
   balance: string;
+  /** Their spend-anywhere pot, which a purchase award never touches. */
+  globalBalance: string;
   fraudFlag?: string;
   heldForReview?: boolean;
   idempotentReplay?: boolean;
 };
+
+/**
+ * Points earned at a checkout are held against the partner that issued them, so
+ * "wallet balance" on its own named the wrong pot: staff read the figure as
+ * spend-anywhere credit, and the global pot it suggested had not moved at all.
+ */
+function balanceDetail(businessName: string, result: CreditResult) {
+  return `${businessName}: ${result.balance} · Global: ${result.globalBalance}`;
+}
 
 export function RewardsStaffTools({
   business,
@@ -60,13 +72,13 @@ export function RewardsStaffTools({
         setToast({
           tone: "success",
           title: "Duplicate request safely ignored",
-          detail: `Existing LP: ${result.rewardAmount} · Wallet balance: ${result.balance}`,
+          detail: `Existing LP: ${result.rewardAmount} · ${balanceDetail(business.name, result)}`,
         });
       } else {
         setToast({
           tone: "success",
           title: `${result.rewardAmount} added`,
-          detail: `Wallet balance: ${result.balance}`,
+          detail: balanceDetail(business.name, result),
         });
       }
       router.refresh();

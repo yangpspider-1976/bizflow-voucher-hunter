@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { FiArrowLeft } from "react-icons/fi";
+import { formatLoyaltyPoints, partnerBalanceTotal } from "@/lib/loyalty-display";
 import { toDisplayPhone } from "@/lib/phone-display";
 import { AppError } from "@/server/errors";
 import { getCustomer } from "@/server/customers";
@@ -58,12 +59,13 @@ export default async function CustomerDetailPage({
   }
 
   const { summary, campaigns, vouchers } = customer;
-  const loyalty =
-    summary.loyaltyBalanceCentavos === undefined
-      ? null
-      : `${(summary.loyaltyBalanceCentavos / 100).toLocaleString("en-PH", {
-          maximumFractionDigits: 2,
-        })} LP`;
+  const partners = summary.partnerBalances;
+  // A bucket cannot exist without a wallet, but a wallet can exist with no
+  // buckets — so either one present means there are points to show.
+  const hasWallet = summary.loyaltyBalanceCentavos !== undefined || partners.length > 0;
+  const loyaltyTotal = formatLoyaltyPoints(
+    (summary.loyaltyBalanceCentavos ?? 0) + partnerBalanceTotal(partners),
+  );
 
   return (
     <>
@@ -109,9 +111,73 @@ export default async function CustomerDetailPage({
           </article>
           <article className="card metric">
             <span className="muted">Loyalty Points</span>
-            <strong>{loyalty ?? "No wallet"}</strong>
+            <strong>{hasWallet ? loyaltyTotal : "No wallet"}</strong>
           </article>
         </div>
+      </section>
+
+      {/* The tile above is every pot added together, which is not a figure the
+          customer can spend in one place. This is the breakdown behind it: the
+          global pot, then one row per partner they have earned at. */}
+      <section className="panel table-wrap">
+        <div className="admin-topbar">
+          <div>
+            <h2>Loyalty Points</h2>
+            <p className="muted">
+              Points earned at a partner stay with that partner — spendable on its
+              storefront, or moved to the global pot for a fee.
+            </p>
+          </div>
+        </div>
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Pot</th>
+              <th>Balance</th>
+              <th>Lifetime earned</th>
+              <th>Moved to global</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>Global</strong>
+                <div className="muted customer-phone">
+                  Daily rewards and referrals · spendable anywhere
+                </div>
+              </td>
+              <td>
+                {summary.loyaltyBalanceCentavos === undefined ? (
+                  <span className="muted">No wallet</span>
+                ) : (
+                  formatLoyaltyPoints(summary.loyaltyBalanceCentavos)
+                )}
+              </td>
+              {/* The wallet's lifetime counters cover every pot, so printing
+                  them on this row would double-count the partner rows below. */}
+              <td className="muted">—</td>
+              <td className="muted">—</td>
+            </tr>
+            {partners.length === 0 ? (
+              <tr>
+                <td className="muted" colSpan={4}>
+                  No points earned at a partner yet.
+                </td>
+              </tr>
+            ) : (
+              partners.map((partner) => (
+                <tr key={partner.businessId}>
+                  <td>
+                    <strong>{partner.businessName}</strong>
+                  </td>
+                  <td>{formatLoyaltyPoints(partner.balanceCentavos)}</td>
+                  <td>{formatLoyaltyPoints(partner.lifetimeEarnedCentavos)}</td>
+                  <td>{formatLoyaltyPoints(partner.lifetimeTransferredCentavos)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </section>
 
       <section className="panel table-wrap">

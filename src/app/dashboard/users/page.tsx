@@ -1,8 +1,9 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { currentSession } from "@/server/dashboard-data";
+import { formatLoyaltyPoints, partnerBalanceTotal } from "@/lib/loyalty-display";
 import { toDisplayPhone } from "@/lib/phone-display";
-import { listCustomers } from "@/server/customers";
+import { listCustomers, type CustomerSummary } from "@/server/customers";
 import { CustomerSearch } from "../_components/CustomerSearch";
 import { ClickableCustomerRow } from "./ClickableCustomerRow";
 
@@ -13,9 +14,31 @@ function formatDate(value: string) {
     : date.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
 }
 
-function formatLoyalty(centavos?: number) {
-  if (centavos === undefined) return null;
-  return `${(centavos / 100).toLocaleString("en-PH", { maximumFractionDigits: 2 })} LP`;
+/** Everything a customer holds: the global pot plus every partner bucket. */
+function loyaltyTotalCentavos(customer: CustomerSummary) {
+  return (
+    (customer.loyaltyBalanceCentavos ?? 0) + partnerBalanceTotal(customer.partnerBalances)
+  );
+}
+
+/**
+ * The split under the total.
+ *
+ * One figure on its own would read as a single spendable balance, and it is
+ * not: partner points spend only at the partner that issued them, so the column
+ * says how much of the total is locked that way.
+ */
+function loyaltyBreakdown(customer: CustomerSummary) {
+  const parts = [`Global ${formatLoyaltyPoints(customer.loyaltyBalanceCentavos ?? 0)}`];
+  const partners = customer.partnerBalances;
+  if (partners.length > 0) {
+    parts.push(
+      `${partners.length} partner${partners.length === 1 ? "" : "s"} ${formatLoyaltyPoints(
+        partnerBalanceTotal(partners),
+      )}`,
+    );
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -88,8 +111,16 @@ export default async function UsersPage({
                   <td>{customer.voucherCount}</td>
                   <td>{customer.redeemedCount}</td>
                   <td>
-                    {formatLoyalty(customer.loyaltyBalanceCentavos) ?? (
+                    {customer.loyaltyBalanceCentavos === undefined &&
+                    customer.partnerBalances.length === 0 ? (
                       <span className="muted">No wallet</span>
+                    ) : (
+                      <>
+                        <strong>{formatLoyaltyPoints(loyaltyTotalCentavos(customer))}</strong>
+                        <div className="muted customer-phone">
+                          {loyaltyBreakdown(customer)}
+                        </div>
+                      </>
                     )}
                   </td>
                   <td>{formatDate(customer.lastActivityAt)}</td>

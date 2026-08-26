@@ -18,7 +18,11 @@ export async function POST(request: Request) {
     const result = await creditRewardFromPurchase({ ...input, staffName: session.email });
     return ok({
       rewardAmount: result.rewardAmount,
+      // Both pots, because the staff tool names both: `balance` is what the
+      // customer holds at this business — where the award actually landed —
+      // and `globalBalance` is the spend-anywhere pot a purchase never moves.
       balance: result.balance,
+      globalBalance: result.globalBalance,
       fraudFlag: result.fraudFlag,
       heldForReview: result.heldForReview,
       idempotentReplay: result.idempotentReplay,
