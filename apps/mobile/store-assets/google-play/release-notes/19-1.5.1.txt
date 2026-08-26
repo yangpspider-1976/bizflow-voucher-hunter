@@ -1,7 +1,12 @@
 <en-US>
-A fix for signing in as someone else on the same phone.
+A steadier hunt, from the first tap to the prize.
 
-• Signing out now clears the hunt progress left on the device
-• A campaign you have not started offers a fresh hunt, not "Continue"
-• Notification settings now say the daily bonus is up to 10 LP
+• Leave a hunt part-way and resume where you left off
+• Campaigns you started are marked "Hunt in progress"
+• The reel shows only prizes that campaign actually offers
+• An attempt is spent when you spin, never on a reload
+• Booking offers only dates and times a slot can be taken
+• Finished campaigns stay listed, marked unavailable
+• Campaign details show the full offer and category
+• Signing out now clears the hunt left behind on the device
 </en-US>
