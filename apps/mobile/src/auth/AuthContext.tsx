@@ -16,6 +16,8 @@ import {
   subscribeToUnauthorized,
   validateCustomerSession,
 } from "@/api/client";
+import { clearDevPoolIds } from "@/dev/devTools";
+import { clearHuntProgress } from "@/hunt/progressStore";
 import {
   acquirePushToken,
   registerPushToken,
@@ -62,6 +64,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
     await Promise.all([
       SecureStore.deleteItemAsync(TOKEN_KEY),
       SecureStore.deleteItemAsync(PHONE_KEY),
+      // The rest is this *account's* state living on the device, and the next
+      // sign-in may be a different person on the same handset. Left behind, a
+      // resume point made the landing offer "Continue" into a hunt the new
+      // account does not have — carrying them into a step screen instead of ever
+      // calling `POST /hunt/start`, so no user row was written and the dashboard
+      // never saw them — and a forced-pool choice made every draw send a
+      // `devPoolId` the server refuses from anyone but a developer account.
+      //
+      // The visitor session id and the language choice deliberately stay: those
+      // describe the install, not whoever is signed into it.
+      clearHuntProgress(),
+      clearDevPoolIds(),
     ]);
     setDevTools(false);
     setLoyaltyAward(null);

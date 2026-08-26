@@ -44,7 +44,7 @@ const SETTLE_MS = 450;
 export default function RouletteScreen() {
   const t = useTranslation();
   const router = useRouter();
-  const { token } = useAuth();
+  const { devTools, token } = useAuth();
   // Set by "Spin again", the one entry that must always cost a new attempt.
   // Every other way in is a resume, and a resume reveals what is already held.
   const { spin: spinIntent } = useLocalSearchParams<{ spin?: string }>();
@@ -112,6 +112,11 @@ export default function RouletteScreen() {
   const poolsRef = useRef(pools);
   poolsRef.current = pools;
   const drawAbort = useRef<AbortController | null>(null);
+  // Read inside the draw rather than closed over: the session check that answers
+  // whether this account carries the dev tools resolves a moment after mount, and
+  // a reel opened on a cold start must use the settled answer, not `false`.
+  const devToolsRef = useRef(devTools);
+  devToolsRef.current = devTools;
   // Invalidates draw/landing work that began before a development reset.
   const generation = useRef(0);
 
@@ -259,9 +264,13 @@ export default function RouletteScreen() {
           return;
         }
 
-        // Dev-only override chosen in the More tab's dev panel. Resolves to "" in
-        // production, and the API treats the field as optional.
-        const devPoolId = await getDevPoolId(slug);
+        // Dev-only override chosen in the More tab's dev panel. Read only when
+        // the session actually carries the tools: the choice is stored per
+        // device, so an account that is not entitled to one could still find the
+        // previous account's choice on disk and send it — and the server refuses
+        // an override from a non-developer account, which failed the draw rather
+        // than ignoring the field. The API treats it as optional.
+        const devPoolId = devToolsRef.current ? await getDevPoolId(slug) : "";
         const attempt = await drawAttempt(
           {
             campaignSlug: slug,

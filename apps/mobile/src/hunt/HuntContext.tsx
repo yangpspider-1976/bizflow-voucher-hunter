@@ -17,6 +17,7 @@ import {
 } from "react";
 
 import {
+  ApiError,
   getCampaign,
   getCampaignPools,
   getHuntState,
@@ -355,8 +356,28 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
           // E-DUPLICATE-FINAL — the spin is refused server-side either way, so the
           // app has to route to the issued voucher instead of asking for another.
           applySnapshot(snapshot, publicCampaign);
-        } catch {
-          // No hunt session yet — the landing screen's CTA creates one.
+        } catch (caught) {
+          if (!active) return;
+          // E-USER-404 is the server saying this *phone* has never started this
+          // campaign, which makes any stored resume point somebody else's — the
+          // progress map is per device, and a handset outlives the account signed
+          // into it. Left standing, it offered "Continue" into a hunt that does
+          // not exist and carried the customer straight into a step screen, so
+          // `POST /hunt/start` was never called and no user row was ever written.
+          //
+          // Only this code, and only after a successful response: an offline
+          // resume must keep the progress it is there to resume.
+          if (caught instanceof ApiError && caught.code === "E-USER-404") {
+            void clearCampaignProgress(slug);
+            setFlow((current) => ({
+              ...current,
+              step: null,
+              selectedAttemptId: "",
+              selectedSlotId: "",
+              selectedDate: "",
+            }));
+          }
+          // Otherwise: no hunt session yet — the landing screen's CTA creates one.
         }
       } catch (caught) {
         if (active) setError(caught);

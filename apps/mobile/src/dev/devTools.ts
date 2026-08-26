@@ -60,9 +60,20 @@ export async function setDevPoolId(campaignSlug: string, poolId: string) {
   await SecureStore.setItemAsync(DEV_POOL_KEY, JSON.stringify(choices));
 }
 
-/** Every campaign's forced pool, dropped together with a hunt reset. */
+/**
+ * Every campaign's forced pool, dropped together with a hunt reset and with the
+ * session itself.
+ *
+ * Swallows storage failures, like the hunt progress store it sits beside: this
+ * runs as part of signing out, and a handset that cannot write its keychain must
+ * still end up signed out.
+ */
 export async function clearDevPoolIds() {
-  await SecureStore.deleteItemAsync(DEV_POOL_KEY);
+  try {
+    await SecureStore.deleteItemAsync(DEV_POOL_KEY);
+  } catch {
+    // Nothing here is authoritative; the server gates every forced draw anyway.
+  }
 }
 
 export type HuntResetResult = {
