@@ -344,9 +344,10 @@ export function drawAttempt(
 export type CustomerSession = {
   phone: string;
   /**
-   * Whether this number may use the dev tools. True on a dev backend for
-   * everyone, and in production only for the configured developer account —
-   * `__DEV__` alone cannot know the latter, and a release build has it false.
+   * Whether this number is a configured developer account — the answer the More
+   * tab's dev panel renders from, on every backend. Not "may use the dev tools":
+   * a dev deployment opens them for everyone, but showing the panel to every
+   * test account signed in there is not the point of it.
    */
   devTools?: boolean;
 };

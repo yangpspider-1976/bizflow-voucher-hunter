@@ -34,22 +34,24 @@ import { colors, fonts, radius, spacing } from "@/theme";
  * `/campaign/[slug]/more`. The app's More tab is global, so this adds a campaign
  * selector first and then applies both tools to whichever campaign is picked.
  *
- * Renders nothing unless this is a dev build or the session says the signed-in
- * number is the production developer account. The developer account gets the
- * self-scoped tools, LP grants included; only the two that bill a real partner
- * are held back to a dev build — see `@/dev/devTools`.
+ * Renders nothing unless the session says the signed-in number is a configured
+ * developer account. That answer comes from the server on every backend, dev
+ * builds included: a dev build is not by itself a reason to show the panel, and
+ * an ordinary test account signed in on one has no business seeing it. The
+ * developer account gets the self-scoped tools, LP grants included; only the two
+ * that bill a real partner are held back to a dev build — see `@/dev/devTools`.
  */
 export function DevToolsPanel() {
   const { devTools, token } = useAuth();
-  const visible = devBuild || devTools;
+  // The account, and only the account. `devBuild` used to open this too, which
+  // put the panel in front of whoever happened to be signed in locally.
+  const visible = devTools;
   // Funding a wallet mints LP but bills nobody, so the developer account keeps
-  // it in production — which today is everyone who sees this panel at all.
-  // Named separately anyway: `visible` answers whether the panel belongs on the
-  // More tab, this answers who may mint, and the two coincide only because the
-  // server happens to draw its line in the same place.
+  // it in production — which is everyone who sees this panel at all.
   const lpToolsVisible = visible;
   // Simulating a checkout scan or a collection does bill a real partner, so
-  // those stay on a dev build — see `@/dev/devTools`.
+  // those need a dev backend on top of a developer account — the server refuses
+  // them in production for every caller. See `@/dev/devTools`.
   const billingToolsVisible = devBuild;
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignCard[]>([]);
@@ -299,7 +301,7 @@ export function DevToolsPanel() {
       <View style={styles.heading}>
         <Text style={styles.headingText}>Development tools</Text>
         <Text style={styles.headingBadge}>
-          {devBuild ? "Local only" : "Your account only"}
+          {devBuild ? "Your account · local build" : "Your account only"}
         </Text>
       </View>
 

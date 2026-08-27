@@ -99,8 +99,18 @@ function devAccountPhones(): string[] {
   return phones;
 }
 
-/** True when `phone` is one of the configured developer accounts. Format-insensitive. */
-function isDevAccountPhone(phone: string | null | undefined): boolean {
+/**
+ * True when `phone` is one of the configured developer accounts.
+ * Format-insensitive.
+ *
+ * Exported because this, and not `devToolsEnabledFor`, is the answer both
+ * clients render their dev panel from. The two differ on a development
+ * deployment, where `devToolsEnabled()` opens the tools for every account that
+ * signs in: the panel is meant for whoever is doing the testing, not for the
+ * ordinary test accounts signed in beside them, so visibility follows the
+ * account and enforcement keeps the wider deployment gate.
+ */
+export function isDevAccountPhone(phone: string | null | undefined): boolean {
   if (!phone) return false;
   const normalized = normalizePhone(phone);
   if (!normalized) return false;

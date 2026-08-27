@@ -89,10 +89,12 @@ caller's own session phone and is reversible, and the numbers are compared
 normalised so no spelling of one slips past. The tools that move money — LP
 grants, simulated checkout scans, simulated collection — stay on
 `devToolsEnabled()` and refuse in production for these accounts too, because those
-write rows a real partner is billed for. They confer no console rights. Both
-clients gate their panel at build time, so the flag is also returned from
-`GET /api/public/signin/session`; that response is advisory and every tool
-re-checks the gate server-side.
+write rows a real partner is billed for. They confer no console rights. Membership of a
+slot is also what shows a client its dev panel — `isDevAccountPhone` via
+`GET /api/public/signin/session`, on every deployment rather than a build-time
+`NODE_ENV`/`__DEV__` test, which showed the panel to every ordinary account
+signed in against a development backend. That response is advisory and every
+tool re-checks the gate server-side.
 
 **Console rights are re-read per request.** `requireAdmin` reloads the account, so
 disabling, demoting or re-scoping takes effect immediately rather than at the end

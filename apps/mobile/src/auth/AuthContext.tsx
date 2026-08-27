@@ -36,10 +36,11 @@ export type LoyaltyAward = {
 
 type AuthContextValue = {
   /**
-   * Whether the backend grants this session the dev tools. Answered by the
-   * server because a release build's `__DEV__` is false even when the signed-in
-   * number is the production developer account. Advisory: the tools themselves
-   * are gated again on every request.
+   * Whether the signed-in number is a configured developer account. Answered by
+   * the server on every backend, because `__DEV__` knows only what kind of
+   * bundle this is: false in a release build signed in as the developer account,
+   * and true in a dev build signed in as anyone at all. Advisory — the tools
+   * themselves are gated again on every request.
    */
   devTools: boolean;
   isLoading: boolean;

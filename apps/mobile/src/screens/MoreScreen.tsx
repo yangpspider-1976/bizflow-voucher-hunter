@@ -363,8 +363,9 @@ export default function MoreScreen() {
           </Button>
         </View>
       ) : null}
-      {/* Sits directly above sign out, as it does on the web More page. Renders
-          nothing outside development. */}
+      {/* Sits directly above sign out, as it does on the web More page. The dev
+          panel renders nothing unless the signed-in number is a configured
+          developer account, whatever kind of build this is. */}
       <LanguagePicker />
       <NotificationSettings />
       <DevToolsPanel />

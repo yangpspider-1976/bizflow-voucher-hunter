@@ -4,6 +4,7 @@ import {
   assertDevToolsEnabledFor,
   devToolsEnabled,
   devToolsEnabledFor,
+  isDevAccountPhone,
 } from "@/server/dev-tools";
 import { requestSignInOtp, verifySignInOtp } from "@/server/otp";
 import { clientIp } from "@/server/rate-limit";
@@ -277,6 +278,18 @@ describe("production developer account", () => {
     vi.stubEnv("DEV_ACCOUNT_PHONE_2", "09123456789");
     expect(devToolsEnabledFor("+639123456789")).toBe(true);
     expect(devToolsEnabledFor(DEV_PHONE)).toBe(false);
+  });
+
+  it("is the only thing that shows a client the dev panel", () => {
+    // What GET /api/public/signin/session returns, and the whole difference
+    // between the two answers: a development deployment opens the tools for
+    // everyone who signs in, but the panel belongs to the developer account
+    // alone — an ordinary test account on a dev build was seeing it too.
+    vi.stubEnv("NODE_ENV", "development");
+    expect(devToolsEnabledFor(PHONE)).toBe(true);
+    expect(isDevAccountPhone(PHONE)).toBe(false);
+    expect(isDevAccountPhone(DEV_PHONE)).toBe(true);
+    expect(isDevAccountPhone(null)).toBe(false);
   });
 
   it("opens both LP grants for its own wallet in production", () => {

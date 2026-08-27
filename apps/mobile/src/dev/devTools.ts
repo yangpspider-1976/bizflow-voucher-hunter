@@ -6,17 +6,18 @@ import { apiRequest, type RoulettePreview } from "@/api/client";
  * Helpers behind the More tab's dev panel, mirroring the web's
  * `.dev-voucher-picker`. Every endpoint here is gated server-side as well.
  *
- * `__DEV__` covers a local build against a dev backend. It cannot cover the
- * other case — a store build signed in as the production developer account —
- * because it is compiled out of a release bundle, so that answer comes from the
- * session (`useAuth().devTools`) instead.
+ * Whether the panel appears at all is one question, answered only by the session
+ * (`useAuth().devTools`): the signed-in number is a configured developer account,
+ * or it is not. `__DEV__` deliberately does not answer it — a dev build says
+ * something about the bundle, not about who is signed into it, and every
+ * ordinary test account used locally was seeing the panel because of it.
  *
- * The two are not equivalent: a dev build may use everything below, while the
- * production developer account gets the self-scoped tools only — the hunt
- * helpers plus the two LP grants, which mint points but bill nobody. The
- * partner-checkout helpers do bill a real partner and refuse in production for
- * every account, so the panel hides them rather than offering a button that
- * always 403s.
+ * `devBuild` answers the narrower second question of which tools the panel then
+ * offers. The self-scoped tools — the hunt helpers plus the two LP grants, which
+ * mint points but bill nobody — run wherever the account does, production
+ * included. The partner-checkout helpers bill a real partner and stay refused in
+ * production for every account, so the panel hides them rather than offering a
+ * button that always 403s.
  */
 export const devBuild = __DEV__;
 
