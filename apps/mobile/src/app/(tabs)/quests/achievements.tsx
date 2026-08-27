@@ -4,7 +4,10 @@ import type { AchievementCard, AchievementCategory } from "@bizflow/shared";
 
 import { Icon } from "@/components/Icon";
 import { Screen } from "@/components/Screen";
-import { useGamification } from "@/gamification/GamificationContext";
+import {
+  useGamification,
+  useGamificationFocusRefresh,
+} from "@/gamification/GamificationContext";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { colors, fonts, radius, spacing } from "@/theme";
 
@@ -32,6 +35,10 @@ export default function AchievementsScreen() {
   const t = useTranslation();
   const { isLoading, profile, refresh } = useGamification();
   const [category, setCategory] = useState<AchievementCategory | "all">("all");
+
+  // Balances and mission progress move elsewhere in the app, so what this
+  // screen shows is re-read every time it comes into view rather than once.
+  useGamificationFocusRefresh();
 
   const cards = useMemo(
     () =>

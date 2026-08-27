@@ -18,7 +18,10 @@ import { useAuth } from "@/auth/AuthContext";
 import { CampaignImage } from "@/components/CampaignImage";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
-import { useGamification } from "@/gamification/GamificationContext";
+import {
+  useGamification,
+  useGamificationFocusRefresh,
+} from "@/gamification/GamificationContext";
 import { LevelCard } from "@/gamification/LevelCard";
 import { LevelUpCelebration } from "@/gamification/LevelUpCelebration";
 import { UnlockCelebration } from "@/gamification/UnlockCelebration";
@@ -53,6 +56,10 @@ export default function HomeScreen() {
   const { celebrating, dismissCelebration, dismissLevelUp, levelUpToAnnounce, profile } =
     useGamification();
   const [cards, setCards] = useState<CampaignCard[]>([]);
+
+  // Balances and mission progress move elsewhere in the app, so what this
+  // screen shows is re-read every time it comes into view rather than once.
+  useGamificationFocusRefresh();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   // The raw error is kept, not a message: ErrorState needs the code to tell an

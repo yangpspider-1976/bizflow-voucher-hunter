@@ -8,7 +8,10 @@ import { useAuth } from "@/auth/AuthContext";
 import { Button, Field } from "@/components/FormControls";
 import { Icon } from "@/components/Icon";
 import { Screen } from "@/components/Screen";
-import { useGamification } from "@/gamification/GamificationContext";
+import {
+  useGamification,
+  useGamificationFocusRefresh,
+} from "@/gamification/GamificationContext";
 import { LevelCard } from "@/gamification/LevelCard";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { colors, fonts, radius, spacing } from "@/theme";
@@ -35,6 +38,12 @@ export default function LevelUpScreen() {
   // Minted once per confirmation, so a retry after a timeout is the same tap
   // rather than a second conversion.
   const [idempotencyKey, setIdempotencyKey] = useState("");
+
+  // The balance here decides what the customer may convert, and LP moves
+  // elsewhere in the app - earned at a till, spent in the shop, transferred
+  // between pots. Re-read it on every arrival rather than trusting whatever was
+  // true when the app opened.
+  useGamificationFocusRefresh();
 
   const wallets = profile?.convertibleLp ?? [];
   const selected: ConvertibleWallet | undefined = useMemo(() => {

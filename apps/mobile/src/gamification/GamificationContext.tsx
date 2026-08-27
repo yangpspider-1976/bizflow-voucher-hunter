@@ -5,9 +5,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { AppState } from "react-native";
+import { useFocusEffect } from "expo-router";
 import type { AchievementUnlockNotice, GamificationProfile } from "@bizflow/shared";
 
 import { acknowledgeUnlocks, getGamificationProfile } from "@/api/client";
@@ -50,12 +52,17 @@ export function GamificationProvider({ children }: PropsWithChildren) {
   const [error, setError] = useState<unknown>(null);
   const [queue, setQueue] = useState<AchievementUnlockNotice[]>([]);
   const [levelUp, setLevelUp] = useState<number | null>(null);
+  // Screens refresh on focus, so tab-hopping would otherwise stack overlapping
+  // reads and let a slower one land last with older data.
+  const inFlight = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!token) {
       setProfile(null);
       return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setIsLoading(true);
     setError(null);
     try {
@@ -69,6 +76,7 @@ export function GamificationProvider({ children }: PropsWithChildren) {
     } catch (caught) {
       setError(caught);
     } finally {
+      inFlight.current = false;
       setIsLoading(false);
     }
   }, [token]);
@@ -120,6 +128,28 @@ export function GamificationProvider({ children }: PropsWithChildren) {
 
   return (
     <GamificationContext.Provider value={value}>{children}</GamificationContext.Provider>
+  );
+}
+
+/**
+ * Re-reads the profile whenever a screen showing it comes into view.
+ *
+ * The provider alone is not enough: it loads once and then only on
+ * app-foreground, so a screen reached by navigation renders whatever was true
+ * when the app opened. That is wrong the moment anything else moves a balance -
+ * points earned at a till, an item bought in the LP shop, a transfer between
+ * pots - and the Level Up screen in particular decides what a customer is
+ * allowed to convert, so a stale number there is not cosmetic.
+ *
+ * Guarded against overlap in `refresh`, so switching tabs quickly costs one
+ * request rather than a pile of them.
+ */
+export function useGamificationFocusRefresh() {
+  const { refresh } = useGamification();
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
   );
 }
 

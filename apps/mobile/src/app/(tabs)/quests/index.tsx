@@ -8,7 +8,10 @@ import { useAuth } from "@/auth/AuthContext";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
 import { Screen } from "@/components/Screen";
-import { useGamification } from "@/gamification/GamificationContext";
+import {
+  useGamification,
+  useGamificationFocusRefresh,
+} from "@/gamification/GamificationContext";
 import { LevelCard } from "@/gamification/LevelCard";
 import { MissionRow } from "@/gamification/MissionRow";
 import { LevelUpCelebration } from "@/gamification/LevelUpCelebration";
@@ -42,6 +45,10 @@ export default function QuestsScreen() {
   } = useGamification();
 
   const [tab, setTab] = useState<Tab>("DAILY");
+
+  // Balances and mission progress move elsewhere in the app, so what this
+  // screen shows is re-read every time it comes into view rather than once.
+  useGamificationFocusRefresh();
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
 
