@@ -329,7 +329,7 @@ function mapRedemption(row: Row): RewardVoucherRedemption {
 async function audit(
   db: Exec,
   input: {
-    actorType: "customer" | "staff" | "system";
+    actorType: "customer" | "staff" | "system" | "admin";
     actorId?: string;
     action: string;
     entityType: string;
@@ -424,7 +424,7 @@ async function walletByToken(db: Exec, walletToken: string) {
   return wallet;
 }
 
-async function ensureRewardWallet(
+export async function ensureRewardWallet(
   db: Exec,
   input: { phone: string; name?: string; email?: string },
 ) {

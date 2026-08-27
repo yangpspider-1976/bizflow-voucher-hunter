@@ -31,6 +31,7 @@ other visitor is sent to `/client` to install it. Do not rebuild pages there.
 - Customer voucher hunt shipped as an Expo/React Native **Android app** — the only customer client
 - **Loyalty Points (LP)**: daily app-use and referral awards, 5% earn on scanned in-store purchases, conversion to `RWD-` LP vouchers, partner redemption with partial use, and monthly partner settlement (see `docs/REWARDS.md`)
 - In-app **shop** for spending LP with participating partners
+- **Levels, missions and achievements**: five XP levels bought with LP, time-windowed daily missions, tiered permanent badges, a central idempotent reward engine, and versioned economy settings an operator changes without a deploy (see `docs/GAMIFICATION.md`)
 - Desktop-optimized admin dashboard
 - Desktop-optimized staff validation and redemption page (vouchers, LP vouchers, wallet QR credit)
 - Push notifications to the app (`docs/NOTIFICATIONS.md`) and app localization (`docs/I18N.md`)

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireSignedInCustomerPhone } from "@/server/customer-auth";
 import { fail, ok } from "@/server/errors";
 import { enforceRateLimit } from "@/server/rate-limit";
+import { onVoucherSelected } from "@/server/gamification/hooks";
 import { selectFinalVoucher, sendVoucherConfirmationSms } from "@/server/voucher-engine";
 
 // The phone comes from the OTP-verified session cookie, never the body.
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
     const phone = await requireSignedInCustomerPhone(request);
     const input = schema.parse(await request.json());
     const result = await selectFinalVoucher({ ...input, phone });
+    await onVoucherSelected({
+      phone,
+      voucherId: result.voucher.id,
+      campaignId: result.campaign.id,
+      businessId: result.campaign.businessId,
+    });
     // Voucher issuance already succeeded; an SMS delivery failure is logged
     // in sms_logs and must not fail this request. A healthy provider resolves
     // well inside the budget; a slow one keeps going in the background while

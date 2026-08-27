@@ -1,4 +1,6 @@
 import type {
+  AchievementCard,
+  AchievementUnlockNotice,
   Business,
   Campaign,
   CampaignAvailability,
@@ -7,7 +9,12 @@ import type {
   ClaimedVoucher,
   EndUser,
   ErrorResponse,
+  GamificationProfile,
   LoyaltyDailyStatus,
+  MissionCard,
+  MissionClaimResult,
+  MissionState,
+  PointConversionResult,
   RewardLedgerEntry,
   RewardVoucher,
   RewardWallet,
@@ -240,6 +247,14 @@ export type HuntState = {
   voucherSlot?: CampaignSlot;
   remainingBaseAttempts: number;
   remainingBonusAttempts: number;
+  /**
+   * Hunts the player's level grants today, and how many are left. A third
+   * source alongside the campaign's base attempts and share bonuses, kept
+   * separate so the hunt screen can say where an attempt came from. Optional so
+   * a response from a server older than levels still renders.
+   */
+  remainingLevelAttempts?: number;
+  levelAttemptAllowance?: number;
   sharesGrantedToday: number;
 };
 
@@ -311,7 +326,7 @@ export function drawAttempt(
   input: {
     campaignSlug: string;
     sessionId: string;
-    sourceType?: "base" | "referral_bonus";
+    sourceType?: "base" | "referral_bonus" | "level_bonus";
     /** Development-only: forces the draw to a specific pool. */
     devPoolId?: string;
   },
@@ -603,4 +618,109 @@ export function purchaseRewardProduct(
     "/api/public/rewards/products/purchase",
     { method: "POST", body: input, token },
   );
+}
+
+/* Gamification: levels, missions, achievements ------------------------------ */
+
+export function getGamificationProfile(token: string): Promise<GamificationProfile> {
+  return apiRequest<GamificationProfile>("/api/public/gamification/profile", { token });
+}
+
+export function listMissions(
+  token: string,
+  type?: MissionCard["type"],
+): Promise<MissionCard[]> {
+  const query = type ? `?type=${encodeURIComponent(type)}` : "";
+  return apiRequest<MissionCard[]>(`/api/public/gamification/missions${query}`, { token });
+}
+
+/**
+ * Claims a mission the player has to tap for.
+ *
+ * Most daily missions pay themselves the moment their event lands, so this is
+ * only reached by the ones configured not to. The server is the authority on
+ * whether a claim is allowed; the button is only ever a request.
+ */
+export function claimMission(
+  input: { missionKey: string; missionDate?: string },
+  token: string,
+): Promise<MissionClaimResult> {
+  return apiRequest<MissionClaimResult>(
+    `/api/public/gamification/missions/${encodeURIComponent(input.missionKey)}/claim`,
+    { method: "POST", body: { missionDate: input.missionDate }, token },
+  );
+}
+
+export function joinMission(
+  missionKey: string,
+  token: string,
+): Promise<{ missionKey: string; state: MissionState }> {
+  return apiRequest(
+    `/api/public/gamification/missions/${encodeURIComponent(missionKey)}/join`,
+    { method: "POST", body: {}, token },
+  );
+}
+
+/**
+ * Spends Loyalty Points on experience.
+ *
+ * `idempotencyKey` is generated once per confirmation, not per request, so a
+ * retry after a timeout is recognised as the same tap rather than converting a
+ * second time. The conversion cannot be undone, which the confirmation screen
+ * says before this is called.
+ */
+export function convertPointsToXp(
+  input: {
+    businessId: string | null;
+    amount: string | number;
+    idempotencyKey: string;
+  },
+  token: string,
+): Promise<PointConversionResult> {
+  return apiRequest<PointConversionResult>(
+    "/api/public/gamification/levels/convert-points",
+    { method: "POST", body: input, token },
+  );
+}
+
+export function listAchievements(token: string): Promise<{
+  achievements: AchievementCard[];
+  unseenUnlocks: AchievementUnlockNotice[];
+}> {
+  return apiRequest("/api/public/gamification/achievements", { token });
+}
+
+/**
+ * Tells the server which celebration screens have been shown.
+ *
+ * Acknowledged server-side rather than in device storage: a badge unlocked
+ * while the app was closed should be celebrated on whichever device is opened
+ * next, exactly once, and an uninstall should not resurrect a year of confetti.
+ */
+export function acknowledgeUnlocks(
+  input: { groupKeys?: string[]; levelUp?: boolean },
+  token: string,
+): Promise<{ acknowledged: number }> {
+  return apiRequest("/api/public/gamification/achievements/seen", {
+    method: "POST",
+    body: input,
+    token,
+  });
+}
+
+/**
+ * The signed `custom_data` an AdMob rewarded ad has to carry.
+ *
+ * The reward is not granted by the app finishing an ad — it is granted when
+ * Google's server-side verification callback reaches the backend carrying this
+ * value. Nothing here can shortcut that.
+ */
+export function requestAdNonce(
+  token: string,
+): Promise<{ customData: string; viewsToday: number }> {
+  return apiRequest("/api/public/gamification/ads/nonce", {
+    method: "POST",
+    body: {},
+    token,
+  });
 }

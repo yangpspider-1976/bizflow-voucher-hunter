@@ -2,6 +2,7 @@ import { z } from "zod";
 import { assertBusinessAccess, requireAdmin } from "@/server/auth";
 import { fail, ok } from "@/server/errors";
 import { enforceRateLimit } from "@/server/rate-limit";
+import { onQrRedeemedByWallet } from "@/server/gamification/hooks";
 import { redeemRewardVoucher } from "@/server/rewards-network";
 
 const schema = z.object({
@@ -27,6 +28,15 @@ export async function POST(request: Request) {
     const input = schema.parse(await request.json());
     assertBusinessAccess(session, input.businessId);
     const result = await redeemRewardVoucher({ ...input, staffName: session.email });
+    // Spending an LP voucher is a visit too, so it counts toward Voucher User
+    // and City Explorer alongside campaign vouchers.
+    await onQrRedeemedByWallet({
+      walletId: result.redemption.walletId,
+      businessId: input.businessId,
+      objectType: "reward_voucher_redemption",
+      objectId: result.redemption.id,
+      amountCentavos: result.redemption.amountCentavos,
+    });
     return ok({
       voucher: {
         voucherCode: result.voucher.voucherCode,

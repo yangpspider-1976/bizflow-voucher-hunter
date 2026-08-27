@@ -58,6 +58,16 @@ export default function TabsLayout() {
           tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="home" />,
         }}
       />
+      {/* Levels, missions and achievements. Second, not last: it is the screen
+          the app wants opened daily, and burying it behind More would make the
+          daily habit the hardest thing to reach. */}
+      <Tabs.Screen
+        name="quests"
+        options={{
+          title: t("tab.quests"),
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="award" />,
+        }}
+      />
       <Tabs.Screen
         name="vouchers"
         options={{

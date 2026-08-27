@@ -1,3 +1,4 @@
+import { ensureGamificationSeed } from "@/server/gamification/definitions";
 import {
   createClient,
   type Client,
@@ -522,6 +523,340 @@ CREATE TABLE IF NOT EXISTS reward_audit_logs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reward_audit_entity ON reward_audit_logs (entity_type, entity_id, created_at);
+-- ---- Gamification -------------------------------------------------------
+-- Levels, missions and achievements hang off the reward wallet rather than off
+-- "users": "users" is per-campaign, so one person has as many rows as hunts
+-- they have played, while "reward_wallets.phone" is unique and already holds
+-- the LP these features spend and pay. One wallet is one player.
+--
+-- Economy values are never hard-coded. Every payout, threshold and window is
+-- read from a row here, and each transaction records the version it ran under
+-- so a settled month can be reproduced after operations change the numbers.
+CREATE TABLE IF NOT EXISTS gamification_configs (
+  id TEXT PRIMARY KEY,
+  -- economy | levels | missions | achievements
+  config_key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  -- Draft | Active | Retired
+  status TEXT NOT NULL DEFAULT 'Draft',
+  effective_at TEXT NOT NULL,
+  created_by TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (config_key, version)
+);
+CREATE INDEX IF NOT EXISTS idx_gamification_configs_active
+  ON gamification_configs (config_key, status, effective_at);
+
+-- The level ladder, versioned. A published change writes a new "version"; the
+-- old rows stay so a transaction that ran under them can still be explained.
+CREATE TABLE IF NOT EXISTS level_definitions (
+  id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL,
+  level INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  min_xp INTEGER NOT NULL CHECK (min_xp >= 0),
+  benefits_json TEXT NOT NULL DEFAULT '[]',
+  bonus_hunts INTEGER NOT NULL DEFAULT 0 CHECK (bonus_hunts >= 0),
+  early_access_minutes INTEGER NOT NULL DEFAULT 0 CHECK (early_access_minutes >= 0),
+  effective_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (version, level)
+);
+-- One row per player. A cache of "user_xp_ledger", kept in the same transaction
+-- as the ledger entry that moves it, so the two cannot disagree.
+CREATE TABLE IF NOT EXISTS user_levels (
+  wallet_id TEXT PRIMARY KEY REFERENCES reward_wallets(id),
+  lifetime_xp INTEGER NOT NULL DEFAULT 0 CHECK (lifetime_xp >= 0),
+  current_level INTEGER NOT NULL DEFAULT 1,
+  -- The level the player was on before the last recalculation, so a promotion
+  -- can be announced once and only once.
+  announced_level INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Immutable. A mistake is corrected by a reversing entry, never by an edit.
+CREATE TABLE IF NOT EXISTS user_xp_ledger (
+  seq bigserial NOT NULL,
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  -- Signed: negative entries are reversals and abuse recovery only.
+  delta INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+  -- conversion | mission | achievement | admin_adjustment | reversal | backfill
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  reward_tx_id TEXT,
+  idempotency_key TEXT NOT NULL,
+  config_version INTEGER NOT NULL,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_xp_ledger_wallet ON user_xp_ledger (wallet_id, created_at);
+
+-- The LP side of a level-up purchase, linked to both ledgers so the monthly
+-- statement can report "Level Conversion" as its own line.
+CREATE TABLE IF NOT EXISTS point_xp_conversions (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  -- Null when the LP came from the spend-anywhere global pot, which belongs to
+  -- no partner and so extinguishes no partner liability.
+  business_id TEXT REFERENCES businesses(id),
+  lp_centavos INTEGER NOT NULL CHECK (lp_centavos > 0),
+  xp_amount INTEGER NOT NULL CHECK (xp_amount > 0),
+  status TEXT NOT NULL DEFAULT 'Completed',
+  loyalty_ledger_id TEXT,
+  xp_ledger_id TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  config_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_point_xp_conversions_wallet ON point_xp_conversions (wallet_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_point_xp_conversions_business ON point_xp_conversions (business_id, created_at);
+
+-- An administrator template. Never edited in place once live: publishing a
+-- change writes a new "definition_version", which in-flight instances keep
+-- pointing at so their rules cannot change under them.
+CREATE TABLE IF NOT EXISTS mission_definitions (
+  id TEXT PRIMARY KEY,
+  mission_key TEXT NOT NULL,
+  definition_version INTEGER NOT NULL,
+  -- DAILY | URGENT | ONBOARDING | PARTNER
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  trigger_event TEXT NOT NULL,
+  target_count INTEGER NOT NULL DEFAULT 1 CHECK (target_count > 0),
+  -- Manila wall-clock window, "HH:MM"; both null means all day.
+  window_start TEXT,
+  window_end TEXT,
+  min_level INTEGER NOT NULL DEFAULT 1,
+  partner_id TEXT REFERENCES businesses(id),
+  -- JSON RewardLine[].
+  reward_json TEXT NOT NULL,
+  -- JSON: unique_rule, amount_rule, proof_rule, segment, area.
+  condition_json TEXT NOT NULL DEFAULT '{}',
+  auto_claim INTEGER NOT NULL DEFAULT 1,
+  global_quota INTEGER,
+  user_quota INTEGER NOT NULL DEFAULT 1,
+  -- LP centavos a PARTNER-funded campaign may spend in total.
+  reward_budget_centavos INTEGER,
+  spent_budget_centavos INTEGER NOT NULL DEFAULT 0,
+  joined_count INTEGER NOT NULL DEFAULT 0,
+  -- Draft | Review | Scheduled | Active | Stopped | Archived
+  status TEXT NOT NULL DEFAULT 'Draft',
+  starts_at TEXT,
+  ends_at TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  approved_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (mission_key, definition_version)
+);
+CREATE INDEX IF NOT EXISTS idx_mission_definitions_live ON mission_definitions (status, type, sort_order);
+
+-- One player's instance of one mission. Daily missions get one row per Manila
+-- date; anything else uses '' so the unique key still holds a single instance.
+CREATE TABLE IF NOT EXISTS user_missions (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  mission_key TEXT NOT NULL,
+  definition_version INTEGER NOT NULL,
+  mission_date TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  progress INTEGER NOT NULL DEFAULT 0,
+  target INTEGER NOT NULL,
+  assigned_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  completed_at TEXT,
+  claimed_at TEXT,
+  reward_tx_id TEXT,
+  reject_reason TEXT,
+  updated_at TEXT NOT NULL,
+  UNIQUE (wallet_id, mission_key, mission_date)
+);
+CREATE INDEX IF NOT EXISTS idx_user_missions_wallet ON user_missions (wallet_id, mission_date);
+CREATE INDEX IF NOT EXISTS idx_user_missions_state ON user_missions (state, expires_at);
+
+CREATE TABLE IF NOT EXISTS achievement_definitions (
+  id TEXT PRIMARY KEY,
+  group_key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  -- Bronze | Silver | Gold | Royal
+  tier TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL,
+  counter_key TEXT NOT NULL,
+  threshold INTEGER NOT NULL CHECK (threshold > 0),
+  reward_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Active',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (group_key, tier, version)
+);
+
+-- Cumulative counters, so a request never recounts raw events. The source
+-- events are kept in gamification_events for recalculation.
+CREATE TABLE IF NOT EXISTS user_achievement_progress (
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  counter_key TEXT NOT NULL,
+  counter_value INTEGER NOT NULL DEFAULT 0 CHECK (counter_value >= 0),
+  -- Streak bookkeeping: the last Manila date that advanced this counter.
+  last_date TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (wallet_id, counter_key)
+);
+
+-- Membership rows for counters that count distinct things (partners visited)
+-- rather than occurrences. The row's existence is the deduplication.
+CREATE TABLE IF NOT EXISTS user_counter_members (
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  counter_key TEXT NOT NULL,
+  member_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (wallet_id, counter_key, member_key)
+);
+
+CREATE TABLE IF NOT EXISTS user_achievements (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  group_key TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  progress_at_unlock INTEGER NOT NULL,
+  unlocked_at TEXT NOT NULL,
+  reward_tx_id TEXT,
+  backfill_job_id TEXT,
+  -- Set only when an administrator revokes a badge, with their reason.
+  revoked_at TEXT,
+  revoked_reason TEXT,
+  -- Cleared once the app has shown its celebration screen.
+  seen_at TEXT,
+  UNIQUE (wallet_id, group_key, tier)
+);
+CREATE INDEX IF NOT EXISTS idx_user_achievements_wallet ON user_achievements (wallet_id, unlocked_at);
+
+-- Every grant of XP, LP, a hunt ticket or a badge, whatever asked for it. The
+-- unique idempotency key is what makes a retried event, a double tap and a
+-- replayed ad callback pay out once.
+CREATE TABLE IF NOT EXISTS reward_transactions (
+  seq bigserial NOT NULL,
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  -- mission | achievement | conversion | admin
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  -- JSON RewardLine[], as granted.
+  reward_json TEXT NOT NULL,
+  xp_amount INTEGER NOT NULL DEFAULT 0,
+  lp_centavos INTEGER NOT NULL DEFAULT 0,
+  hunt_tickets INTEGER NOT NULL DEFAULT 0,
+  badge TEXT,
+  -- PLATFORM | PARTNER
+  funding_source TEXT NOT NULL DEFAULT 'PLATFORM',
+  partner_id TEXT REFERENCES businesses(id),
+  -- GRANTED | REVIEW_REQUIRED | REVERSED | REJECTED
+  status TEXT NOT NULL DEFAULT 'GRANTED',
+  hold_reason TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  reversal_of TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  config_version INTEGER NOT NULL,
+  metadata TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reward_transactions_wallet ON reward_transactions (wallet_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reward_transactions_source ON reward_transactions (source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_reward_transactions_partner ON reward_transactions (partner_id, created_at);
+
+-- Hunt attempts earned rather than granted by the campaign. The existing base
+-- and share attempts stay where they are; this is the separate field the level
+-- and mission systems pay into, so the three sources stay tellable apart.
+CREATE TABLE IF NOT EXISTS hunt_ticket_ledger (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  -- level | mission | achievement | spend
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  delta INTEGER NOT NULL,
+  -- Manila date the ticket belongs to. Level tickets are daily and expire with
+  -- the day; earned tickets carry '' and do not.
+  ticket_date TEXT NOT NULL DEFAULT '',
+  campaign_id TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hunt_ticket_ledger_wallet ON hunt_ticket_ledger (wallet_id, ticket_date);
+
+-- Event log and inbox in one table: verified domain events land here, are
+-- deduplicated by idempotency_key, then processed by the rules engine. A row
+-- that fails repeatedly stops being retried and is left for an operator, which
+-- is this system's dead-letter queue.
+CREATE TABLE IF NOT EXISTS gamification_events (
+  seq bigserial NOT NULL,
+  event_id TEXT PRIMARY KEY,
+  event_name TEXT NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  wallet_id TEXT REFERENCES reward_wallets(id),
+  phone TEXT,
+  occurred_at_utc TEXT NOT NULL,
+  received_at_utc TEXT NOT NULL,
+  source TEXT NOT NULL,
+  partner_id TEXT,
+  object_type TEXT,
+  object_id TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  amount_centavos INTEGER,
+  device_id_hash TEXT,
+  -- No raw receipts, precise locations or personal data: a reference key only.
+  metadata TEXT,
+  -- Pending | Processed | Failed | Ignored
+  status TEXT NOT NULL DEFAULT 'Pending',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  processed_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gamification_events_status ON gamification_events (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_gamification_events_wallet ON gamification_events (wallet_id, event_name, occurred_at_utc);
+
+-- One AdMob server-side verification per ad view. Separate from the event log
+-- because the transaction id is AdMob's, is the only thing that makes a replay
+-- detectable, and must be unique on its own.
+CREATE TABLE IF NOT EXISTS ad_verifications (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  ad_transaction_id TEXT NOT NULL UNIQUE,
+  ad_unit TEXT,
+  ad_network TEXT,
+  nonce TEXT,
+  reward_amount INTEGER,
+  reward_item TEXT,
+  signature_key_id TEXT,
+  verified_at TEXT NOT NULL,
+  manila_date TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ad_verifications_wallet ON ad_verifications (wallet_id, manila_date);
+
+-- Restartable, user-batched achievement backfill.
+CREATE TABLE IF NOT EXISTS achievement_backfill_jobs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  cursor_wallet_id TEXT,
+  wallets_done INTEGER NOT NULL DEFAULT 0,
+  unlocks_granted INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  started_by TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT
+);
 `;
 
 let client: Client | null = null;
@@ -557,6 +892,24 @@ function ensureReady(): Promise<void> {
 // Every data table, ordered so deletes respect (soft) references. Used by the
 // migration reset and by resetDb.
 const DATA_TABLES = [
+  // Gamification first: every one of these references reward_wallets or
+  // businesses, so they have to be gone before those rows can be.
+  "ad_verifications",
+  "achievement_backfill_jobs",
+  "gamification_events",
+  "hunt_ticket_ledger",
+  "reward_transactions",
+  "user_achievements",
+  "user_counter_members",
+  "user_achievement_progress",
+  "achievement_definitions",
+  "user_missions",
+  "mission_definitions",
+  "point_xp_conversions",
+  "user_xp_ledger",
+  "user_levels",
+  "level_definitions",
+  "gamification_configs",
   "reward_audit_logs",
   // Draws down businesses(id) and references settlements, so it goes first.
   "business_deposit_entries",
@@ -633,6 +986,10 @@ async function init() {
   await ensureRewardsSchema(c);
   await ensureSmsSchema(c);
   await ensureAuthSchema(c);
+  // Levels, missions and achievements are economy configuration, not demo
+  // fixtures: an install with none of them has no working reward engine, so the
+  // catalogue is seeded even where the sample data is suppressed.
+  await ensureGamificationSeed(c);
 
   if (migrating) {
     // Full reset so seed changes (e.g. campaign titles) reach already-seeded
@@ -1924,6 +2281,7 @@ export async function resetDb() {
     "write"
   );
   await seed(c);
+  await ensureGamificationSeed(c);
   await ensureDemoCampaignAvailability(c);
   await c.batch(
     // The reset is a new world: the one-shot bucket backfill has nothing left to
@@ -1959,6 +2317,8 @@ export async function wipeDb() {
     ],
     "write"
   );
+  // Same reasoning as init(): a handed-over install still needs an economy.
+  await ensureGamificationSeed(c);
   // Survives restarts, so init() does not helpfully reseed what was just wiped.
   await c.execute({
     sql: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",

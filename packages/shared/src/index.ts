@@ -7,6 +7,7 @@
 export * from "./types";
 export * from "./benefit-rules";
 export * from "./campaign-image";
+export * from "./gamification";
 export * from "./maps";
 export * from "./phone";
 export * from "./phone-display";

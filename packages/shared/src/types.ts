@@ -3,7 +3,14 @@ export type CampaignStatus = "active" | "paused" | "closed";
 export type SlotStatus = "active" | "sold_out" | "closed" | "paused";
 export type AttemptStatus = "Candidate" | "Held" | "Selected" | "Released" | "Expired";
 export type VoucherStatus = "Issued" | "Delivered" | "Redeemed" | "Expired" | "Cancelled" | "NoShow";
-export type SourceType = "base" | "referral_bonus" | "admin_bonus";
+// `level_bonus` is the daily allowance a player's level carries, kept apart
+// from the campaign's base attempts and from share bonuses so the three
+// sources of an attempt stay tellable apart on a hunt and in support.
+export type SourceType =
+  | "base"
+  | "referral_bonus"
+  | "level_bonus"
+  | "admin_bonus";
 
 export type Business = {
   id: string;
@@ -246,6 +253,13 @@ export type RewardLedgerType =
   | "backfill_out"
   | "backfill_in"
   | "dev_grant"
+  // Gamification. A mission or achievement payout, and the debit that buys XP.
+  // `level_conversion` is reported as its own line on a partner statement,
+  // because converting partner LP into XP extinguishes that partner's liability
+  // rather than moving it.
+  | "mission_reward"
+  | "achievement_reward"
+  | "level_conversion"
   | "adjustment";
 export type RewardVoucherStatus = "Active" | "Redeemed" | "Expired" | "Cancelled";
 export type RewardTransactionStatus = "Accepted" | "Held" | "Rejected" | "Adjusted" | "Cancelled";

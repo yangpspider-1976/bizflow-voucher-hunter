@@ -3,6 +3,7 @@ import { z } from "zod";
 import { enforceRateLimit } from "@/server/rate-limit";
 import { AppError, fail, ok } from "@/server/errors";
 import { notifyReferralConverted } from "@/server/notifications";
+import { onReferralVerified } from "@/server/gamification/hooks";
 import { recordReferralOpen } from "@/server/voucher-engine";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,13 @@ export async function GET(request: NextRequest) {
     // Fire-and-forget, after the grant has committed. The visitor is mid-redirect;
     // their referrer's notification must not delay or fail that.
     if (outcome.granted && outcome.referrerPhone) {
+      // The Connector achievement counts verified referrals, and this is the
+      // only place one is verified. Awaited nowhere: the visitor is mid-redirect.
+      void onReferralVerified({
+        phone: outcome.referrerPhone,
+        referralRewardId: outcome.referralRewardId ?? "",
+        campaignId: outcome.campaignId,
+      });
       void notifyReferralConverted({
         phone: outcome.referrerPhone,
         campaignSlug: outcome.campaignSlug ?? parsed.data.campaign,
@@ -105,6 +113,13 @@ export async function POST(request: NextRequest) {
       visitorSessionId,
     });
     if (outcome.granted && outcome.referrerPhone) {
+      // The Connector achievement counts verified referrals, and this is the
+      // only place one is verified. Awaited nowhere: the visitor is mid-redirect.
+      void onReferralVerified({
+        phone: outcome.referrerPhone,
+        referralRewardId: outcome.referralRewardId ?? "",
+        campaignId: outcome.campaignId,
+      });
       void notifyReferralConverted({
         phone: outcome.referrerPhone,
         campaignSlug: outcome.campaignSlug ?? input.campaign,

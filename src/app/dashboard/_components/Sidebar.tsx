@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  FiAward,
   FiBriefcase,
   FiCheckSquare,
   FiClock,
@@ -85,6 +86,11 @@ const navSections: { title: string; items: NavItem[] }[] = [
         href: "/dashboard/rewards",
         icon: <FiRepeat aria-hidden="true" />,
         metricCards: 4,
+      },
+      {
+        label: "Levels & Missions",
+        href: "/dashboard/gamification",
+        icon: <FiAward aria-hidden="true" />,
       },
       {
         label: "Transactions",

@@ -3,6 +3,8 @@ import type { Client, Transaction } from "@/server/pg-driver";
 import { generateQrToken, generateVoucherCode } from "@/server/codes";
 import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools";
 import { AppError } from "@/server/errors";
+import { onQrRedeemed } from "@/server/gamification/hooks";
+import { levelBonusHunts } from "@/server/gamification/levels";
 import { MAX_MONEY_DISPLAY, MAX_MONEY_PESOS } from "@/lib/limits";
 import {
   addCalendarDays,
@@ -232,6 +234,29 @@ async function countBonusAttemptsUsedToday(db: Exec, campaignId: string, userId:
   return Number(row.c);
 }
 
+/**
+ * Hunts a player's level is worth today, minus the ones they have spent.
+ *
+ * A separate allowance from the campaign's base attempts and from share
+ * bonuses, as the requirements ask: three sources, counted separately, so the
+ * hunt screen can say where each attempt came from. The allowance is daily and
+ * does not accumulate — an unused level hunt is gone at Manila midnight, the
+ * same as everything else on the daily clock.
+ */
+async function remainingLevelAttempts(db: Exec, campaign: Campaign, user: EndUser) {
+  const wallet = await one(db, "SELECT id FROM reward_wallets WHERE phone = ?", [user.phone]);
+  if (!wallet) return { allowance: 0, remaining: 0 };
+  const allowance = await levelBonusHunts(db, String(wallet.id));
+  if (allowance <= 0) return { allowance: 0, remaining: 0 };
+  const used = await one(
+    db,
+    `SELECT COUNT(*) AS c FROM attempts
+     WHERE campaign_id = ? AND user_id = ? AND source_type = 'level_bonus' AND created_at >= ?`,
+    [campaign.id, user.id, startOfTodayIso()],
+  );
+  return { allowance, remaining: Math.max(0, allowance - Number(used?.c ?? 0)) };
+}
+
 async function remainingBonusAttempts(db: Exec, campaign: Campaign, userId: string) {
   const granted = Math.min(await countGrantedRewardsToday(db, campaign.id, userId), campaign.referralDailyLimit);
   const used = await countBonusAttemptsUsedToday(db, campaign.id, userId);
@@ -292,6 +317,7 @@ export function recordReferralOpen(input: { campaignSlug: string; ref: string; v
     }
 
     let loyaltyAwarded = false;
+    let rewardId = "";
     try {
       const referralRewardId = await insertReferralReward(
         tx,
@@ -300,6 +326,7 @@ export function recordReferralOpen(input: { campaignSlug: string; ref: string; v
         input.visitorSessionId,
         "granted",
       );
+      rewardId = referralRewardId;
       loyaltyAwarded = await awardReferralLoyaltyPoints(tx, {
         phone: referrer.phone,
         referralRewardId,
@@ -319,6 +346,11 @@ export function recordReferralOpen(input: { campaignSlug: string; ref: string; v
       referrerPhone: referrer.phone,
       campaignSlug: campaign.slug,
       loyaltyAwarded,
+      // Named so the caller can raise `referral_verified` once this has
+      // committed. The rules engine opens a transaction of its own, and doing
+      // that from inside this one would have the request wait on itself.
+      referralRewardId: rewardId,
+      campaignId: campaign.id,
     };
   });
 }
@@ -693,6 +725,14 @@ export function generateCandidate(input: {
     } else if (sourceType === "referral_bonus") {
       if ((await remainingBonusAttempts(tx, campaign, user.id)) <= 0) {
         throw new AppError("E-ATTEMPT-LIMIT", "No extra attempts earned yet. Share your link to earn one.", 409);
+      }
+    } else if (sourceType === "level_bonus") {
+      if ((await remainingLevelAttempts(tx, campaign, user)).remaining <= 0) {
+        throw new AppError(
+          "E-ATTEMPT-LIMIT",
+          "You have used every hunt your level grants today.",
+          409,
+        );
       }
     }
 
@@ -1360,7 +1400,27 @@ export async function redeemVoucher(input: { codeOrToken: string; staffName: str
     }
   }
 
+  // Outside the transaction above, for the same reason the loyalty award is:
+  // the rules engine opens a transaction of its own, and the redemption is
+  // already committed and owed whether or not a mission noticed it.
+  if (earner) {
+    await onQrRedeemed({
+      phone: earner.phone,
+      businessId: earner.businessId,
+      objectType: "voucher",
+      objectId: earner.voucherId,
+    });
+  }
+
   return { ...(await validateVoucher({ codeOrToken: input.codeOrToken })), loyalty };
+}
+
+async function levelAttemptFields(db: Exec, campaign: Campaign, user: EndUser) {
+  const level = await remainingLevelAttempts(db, campaign, user);
+  return {
+    remainingLevelAttempts: level.remaining,
+    levelAttemptAllowance: level.allowance,
+  };
 }
 
 async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
@@ -1382,6 +1442,7 @@ async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
     voucherSlot: bookedSlotRow ? mapSlot(bookedSlotRow) : undefined,
     remainingBaseAttempts: Math.max(0, campaign.baseAttempts - attempts.filter((a) => a.sourceType === "base").length),
     remainingBonusAttempts: await remainingBonusAttempts(db, campaign, user.id),
+    ...(await levelAttemptFields(db, campaign, user)),
     sharesGrantedToday: await countGrantedRewardsToday(db, campaign.id, user.id)
   };
 }

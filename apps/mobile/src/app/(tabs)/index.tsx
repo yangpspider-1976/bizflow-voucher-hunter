@@ -1,5 +1,5 @@
 import type { CampaignCard } from "@bizflow/shared";
-import { useRouter } from "expo-router";
+import { type Href, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,6 +18,10 @@ import { useAuth } from "@/auth/AuthContext";
 import { CampaignImage } from "@/components/CampaignImage";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
+import { useGamification } from "@/gamification/GamificationContext";
+import { LevelCard } from "@/gamification/LevelCard";
+import { LevelUpCelebration } from "@/gamification/LevelUpCelebration";
+import { UnlockCelebration } from "@/gamification/UnlockCelebration";
 import { useLanguage } from "@/i18n/LanguageContext";
 import {
   availabilityLabel,
@@ -46,6 +50,8 @@ export default function HomeScreen() {
   const { language, t } = useLanguage();
   const { token } = useAuth();
   const router = useRouter();
+  const { celebrating, dismissCelebration, dismissLevelUp, levelUpToAnnounce, profile } =
+    useGamification();
   const [cards, setCards] = useState<CampaignCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -129,6 +135,20 @@ export default function HomeScreen() {
           <Text style={styles.title}>{t("home.title")}</Text>
           <Text style={styles.subtitle}>{t("home.subtitle")}</Text>
         </View>
+
+        {/* Above the directory on purpose: the level card is what makes a
+            return visit feel like continuing something rather than starting
+            over, and it is the shortcut into today's missions. */}
+        {profile ? (
+          <LevelCard
+            level={profile.level}
+            onPress={() => router.push("/quests" as Href)}
+            subtitle={t("quests.subtitle", {
+              done: profile.missions.filter((mission) => mission.state === "CLAIMED").length,
+              total: profile.missions.length,
+            })}
+          />
+        ) : null}
 
         <View style={styles.search}>
           <Icon color={colors.textMuted} name="search" size={17} />
@@ -288,6 +308,15 @@ export default function HomeScreen() {
           </View>
         )}
       </ScrollView>
+      <UnlockCelebration notice={celebrating} onDismiss={dismissCelebration} />
+      {/* Both can be owed at once - a mission pays XP that crosses a threshold
+          and unlocks a badge in the same transaction - so they are separate
+          modals rather than one queue of mixed things. */}
+      <LevelUpCelebration
+        level={levelUpToAnnounce}
+        levels={profile?.levels ?? []}
+        onDismiss={dismissLevelUp}
+      />
     </SafeAreaView>
   );
 }

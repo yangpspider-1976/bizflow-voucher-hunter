@@ -275,10 +275,18 @@ export default function RouletteScreen() {
           {
             campaignSlug: slug,
             sessionId,
+            // Base attempts first, then anything shared for, then the
+            // level allowance. Spending the earned ones last means a player
+            // who never shares still gets everything their level is worth,
+            // and the server refuses whichever pool is actually empty.
             sourceType:
-              opened.attempts.length > 0 && opened.bonusAttempts > 0
-                ? "referral_bonus"
-                : "base",
+              opened.attempts.length === 0
+                ? "base"
+                : opened.bonusAttempts > 0
+                  ? "referral_bonus"
+                  : opened.levelAttempts > 0
+                    ? "level_bonus"
+                    : "base",
             ...(devPoolId ? { devPoolId } : {}),
           },
           token!,

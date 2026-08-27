@@ -18,6 +18,7 @@ import {
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { LoyaltyAwardModal } from "@/components/LoyaltyAwardModal";
 import { OverlayProvider, useOverlay } from "@/components/OverlayHost";
+import { GamificationProvider } from "@/gamification/GamificationContext";
 import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import { useDeepLinkGate } from "@/linking/useDeepLinkGate";
 import { useNotificationRouting } from "@/notifications/useNotificationRouting";
@@ -125,9 +126,14 @@ export default function RootLayout() {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <LanguageProvider>
         <AuthProvider>
-          <OverlayProvider>
-            <RootNavigator />
-          </OverlayProvider>
+          {/* Inside AuthProvider because it reads the session token, and above
+              the navigator because the home card, the quests tab and the
+              celebration modal all read one copy of the same profile. */}
+          <GamificationProvider>
+            <OverlayProvider>
+              <RootNavigator />
+            </OverlayProvider>
+          </GamificationProvider>
         </AuthProvider>
       </LanguageProvider>
     </SafeAreaProvider>

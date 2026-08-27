@@ -72,6 +72,13 @@ type FlowState = {
   guestCount: string;
   issued: IssuedPayload | null;
   bonusAttempts: number;
+  /**
+   * Hunts left today from the player's level, counted separately from base
+   * and share attempts so the reel can spend them in their own right - and so
+   * a support question about how many spins someone had has three numbers to
+   * answer with rather than one.
+   */
+  levelAttempts: number;
   shareCount: number;
   /** The hunt screen last visited, restored on a cold start. */
   step: HuntStep | null;
@@ -88,6 +95,7 @@ const emptyFlow: FlowState = {
   guestCount: "2",
   issued: null,
   bonusAttempts: 0,
+  levelAttempts: 0,
   shareCount: 0,
   step: null,
 };
@@ -303,6 +311,7 @@ export function HuntProvider({ children, slug }: PropsWithChildren<{ slug: strin
           selectedSlotId: keptSelection ? current.selectedSlotId : "",
           selectedDate: keptSelection ? current.selectedDate : "",
           bonusAttempts: state.remainingBonusAttempts,
+          levelAttempts: state.remainingLevelAttempts ?? 0,
           shareCount: state.sharesGrantedToday,
           name: current.name || state.user.name || "",
           email: current.email || state.user.email || "",
