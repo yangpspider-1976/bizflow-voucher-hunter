@@ -19,6 +19,15 @@ export type PushPreferences = {
   daily: boolean;
   reservation: boolean;
   rewards: boolean;
+  missions: boolean;
+  /**
+   * Marketing consent, which partner-promotion announcements need on top of the
+   * mission category. Two separate questions: "tell me about my missions" and
+   * "tell me about promotions near me".
+   */
+  marketing: boolean;
+  /** On by default: no notifications between 10 PM and 8 AM Manila. */
+  quietHours: boolean;
 };
 
 type PushDevice = {
@@ -27,6 +36,9 @@ type PushDevice = {
   dailyEnabled: boolean;
   reservationEnabled: boolean;
   rewardsEnabled: boolean;
+  missionsEnabled: boolean;
+  marketingEnabled: boolean;
+  quietHoursEnabled: boolean;
 };
 
 let notificationsPromise: Promise<NotificationsModule | null> | null = null;
@@ -150,6 +162,11 @@ export async function fetchPushPreferences(
       daily: device.dailyEnabled,
       reservation: device.reservationEnabled,
       rewards: device.rewardsEnabled,
+      // Defaulted rather than assumed absent: a device registered before these
+      // columns existed is opted in, which is what its row already meant.
+      missions: device.missionsEnabled ?? true,
+      marketing: device.marketingEnabled ?? true,
+      quietHours: device.quietHoursEnabled ?? true,
     };
   } catch {
     return null;

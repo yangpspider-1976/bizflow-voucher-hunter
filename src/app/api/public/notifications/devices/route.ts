@@ -21,6 +21,15 @@ const preferencesSchema = z.object({
   daily: z.boolean().optional(),
   reservation: z.boolean().optional(),
   rewards: z.boolean().optional(),
+  missions: z.boolean().optional(),
+  /**
+   * Marketing consent, which urgent-mission announcements need on top of the
+   * mission category. Kept separate because they are separate questions: "tell
+   * me about my missions" and "tell me about partner promotions near me".
+   */
+  marketing: z.boolean().optional(),
+  /** False opts out of the 22:00-08:00 Manila blackout. */
+  quietHours: z.boolean().optional(),
 });
 
 /** Register this install's Expo push token against the signed-in phone. */

@@ -6,6 +6,7 @@ import { listBackfillJobs } from "@/server/gamification/backfill";
 import { deadLetteredEvents } from "@/server/gamification/events";
 import { centavosToLoyaltyPoints } from "@/server/rewards-network";
 import { EconomyForm, LevelLadderForm, BackfillButton } from "../_components/GamificationSettings";
+import { GamificationNav } from "./_nav";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function GamificationPage() {
   const session = await currentSession();
-  if (!session || session.role === "staff") redirect("/dashboard");
+  if (!session) redirect("/dashboard");
+  // A partner account has no business setting the network economy, but it does
+  // have missions to write. Send it there rather than bouncing it to the top.
+  if (session.role === "staff") redirect("/dashboard/gamification/missions");
 
   const db = await getDb();
   const [{ economy, version: economyVersion }, { levels, version: levelVersion }] =
@@ -55,6 +59,8 @@ export default async function GamificationPage() {
           </p>
         </div>
       </header>
+
+      <GamificationNav active="/dashboard/gamification" />
 
       {deadLetters.length > 0 ? (
         <section className="panel alert">
@@ -115,7 +121,8 @@ export default async function GamificationPage() {
         <p className="muted">
           A live mission is never edited. Publishing a change writes a new
           version, and instances already in progress keep the version they
-          started under.
+          started under. Urgent campaigns are written and approved on the{" "}
+          <a href="/dashboard/gamification/missions">Missions</a> screen.
         </p>
         <table className="data-table">
           <thead>

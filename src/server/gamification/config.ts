@@ -40,6 +40,44 @@ export type EconomyConfig = {
   reviewThresholdCentavos: number;
   /** Push blackout, Manila wall clock. Users may override in the app. */
   quietHours: { start: string; end: string };
+  /**
+   * What the anomaly detectors treat as too much in one Manila day.
+   *
+   * Risk policy rather than economy, but it belongs to the same versioned
+   * settings for the same reason: raising a threshold because a real campaign
+   * tripped it should be an operator changing a number, not a deploy.
+   */
+  risk: RiskThresholds;
+};
+
+export type RiskThresholds = {
+  /** Verified rewarded ads in a day beyond which a wallet is worth a look. */
+  adsPerDay: number;
+  /** Distinct wallets sharing one device fingerprint. */
+  walletsPerDevice: number;
+  /** QR redemptions by one player in a day. */
+  qrPerDay: number;
+  /** Referrals verified for one player in a day. */
+  referralsPerDay: number;
+  /** Reviews verified for one player in a day. */
+  reviewsPerDay: number;
+  /** Rejected evidence submissions before a player is worth reviewing. */
+  rejectedProofs: number;
+  /**
+   * Open-signal score at which new rewards are held for approval rather than
+   * paid. Below it a flagged player keeps earning and is only watched.
+   */
+  holdScore: number;
+};
+
+export const DEFAULT_RISK: RiskThresholds = {
+  adsPerDay: 6,
+  walletsPerDevice: 4,
+  qrPerDay: 12,
+  referralsPerDay: 8,
+  reviewsPerDay: 6,
+  rejectedProofs: 3,
+  holdScore: 6,
 };
 
 export const DEFAULT_ECONOMY: EconomyConfig = {
@@ -49,6 +87,7 @@ export const DEFAULT_ECONOMY: EconomyConfig = {
   dailyLpGrantCapCentavos: 200_00,
   reviewThresholdCentavos: 500_00,
   quietHours: { start: "22:00", end: "08:00" },
+  risk: DEFAULT_RISK,
 };
 
 export const DEFAULT_LEVELS: LevelDefinition[] = [
@@ -157,7 +196,12 @@ export async function loadEconomy(db: Exec): Promise<LoadedEconomy> {
     version: Number(row.version),
     // Merged rather than replaced, so a payload written before a field existed
     // does not read back as undefined and multiply an amount by NaN.
-    economy: { ...DEFAULT_ECONOMY, ...parsed },
+    economy: {
+      ...DEFAULT_ECONOMY,
+      ...parsed,
+      quietHours: { ...DEFAULT_ECONOMY.quietHours, ...(parsed.quietHours ?? {}) },
+      risk: { ...DEFAULT_RISK, ...(parsed.risk ?? {}) },
+    },
   };
 }
 

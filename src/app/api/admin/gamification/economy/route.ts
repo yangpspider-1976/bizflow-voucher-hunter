@@ -2,7 +2,7 @@ import { z } from "zod";
 import { assertRewardsAdmin, requireAdmin } from "@/server/auth";
 import { getDb, withTx } from "@/server/db";
 import { fail, ok } from "@/server/errors";
-import { loadEconomy, publishEconomy } from "@/server/gamification/config";
+import { DEFAULT_RISK, loadEconomy, publishEconomy } from "@/server/gamification/config";
 import { recordRewardAudit } from "@/server/rewards-network";
 
 const schema = z.object({
@@ -15,6 +15,19 @@ const schema = z.object({
     start: z.string().regex(/^\d{2}:\d{2}$/),
     end: z.string().regex(/^\d{2}:\d{2}$/),
   }),
+  // Optional so an older client that does not know about risk thresholds keeps
+  // publishing valid economy versions; the loader fills the defaults back in.
+  risk: z
+    .object({
+      adsPerDay: z.number().int().min(1).max(500),
+      walletsPerDevice: z.number().int().min(2).max(100),
+      qrPerDay: z.number().int().min(1).max(500),
+      referralsPerDay: z.number().int().min(1).max(500),
+      reviewsPerDay: z.number().int().min(1).max(500),
+      rejectedProofs: z.number().int().min(1).max(100),
+      holdScore: z.number().int().min(1).max(100),
+    })
+    .optional(),
   note: z.string().max(280).optional(),
   effectiveAt: z.string().datetime().optional(),
 });
@@ -42,7 +55,8 @@ export async function POST(request: Request) {
   try {
     const session = await requireAdmin(request);
     assertRewardsAdmin(session);
-    const { note, effectiveAt, ...economy } = schema.parse(await request.json());
+    const { note, effectiveAt, risk, ...rest } = schema.parse(await request.json());
+    const economy = { ...rest, risk: risk ?? DEFAULT_RISK };
 
     const version = await withTx(async (tx) => {
       const published = await publishEconomy(tx, {

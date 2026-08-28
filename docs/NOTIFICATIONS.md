@@ -1,6 +1,6 @@
 # Push notifications
 
-Four notifications, delivered through Expo's push service (which relays to FCM,
+Ten notifications, delivered through Expo's push service (which relays to FCM,
 so the server needs no Firebase credentials for the default setup).
 
 | # | Trigger | Category | When |
@@ -9,6 +9,12 @@ so the server needs no Firebase credentials for the default setup).
 | 2 | Booking reminder | `reservation` | Scheduled — a day before a `Reserved` slot |
 | 3 | Held purchase approved | `rewards` | Event — an admin approves a flagged scan and the LP lands |
 | 4 | Referral converted | `rewards` | Event — someone opens a shared link and the referrer earns a spin (+10 LP) |
+| 5 | Urgent mission published | `missions` | Event — a campaign goes live, to the players who qualify. **Marketing** |
+| 6 | Daily window open | `missions` | Scheduled hourly — the time-boxed mission that is open right now |
+| 7 | Closing soon | `missions` | Scheduled — a mission expiring within four hours, or a reward left unclaimed |
+| 8 | Evidence reviewed | `missions` | Event — an operator approved or declined a submission |
+| 9 | Level up | `rewards` | Event — a promotion that happened with the app closed |
+| 10 | Badge unlocked | `rewards` | Event — an achievement tier unlocked with the app closed |
 
 The daily nudge is the reason this exists: `loyalty_daily_rewards` grants a
 random 1-10 LP once per Manila day and the product advertises "up to 600 LP in 30 days", which
@@ -37,12 +43,34 @@ retried forever.
 token reassigns it to the current phone, so a handed-on handset stops
 delivering the previous owner's notifications. Sign-out unregisters explicitly.
 
+## Consent, quiet hours and the cap
+
+Three rules apply to the mission notifications, enforced inside `sendPush` so no
+call site can forget one:
+
+- **Quiet hours.** 22:00–08:00 Manila by default, published as gamification
+  economy configuration and changeable without a deploy. Checked per device,
+  because the opt-out is a per-device setting: a household phone whose owner
+  turned quiet hours off still rings.
+- **Marketing consent.** `marketing_enabled` is separate from the `missions`
+  category and is required only for #5. "Tell me about my missions" and "tell me
+  about partner promotions near me" are different questions, and the app asks
+  them separately.
+- **A frequency cap.** Three `missions` pushes per phone per Manila day, counted
+  on delivered messages, however many campaigns happen to launch.
+
+#9 and #10 are sent from the gamification hook layer after the event commits —
+those are the grants that happen with the app closed. Neither clears
+`announced_level` or `seen_at`, so the push tells the player and the in-app
+celebration still runs when they next open it, once each.
+
 ## Layout
 
 | File | Role |
 |---|---|
 | `src/server/push.ts` | Transport — Expo API, device registry, preferences, logging |
 | `src/server/notifications.ts` | Copy and audience queries |
+| `src/server/gamification/notify.ts` | Mission, level and badge copy, plus the consent and quiet-hours policy |
 | `src/app/api/public/notifications/devices/route.ts` | Register / list / toggle / unregister |
 | `src/app/api/cron/notifications/route.ts` | Scheduled fan-out |
 | `apps/mobile/src/notifications/push.ts` | Permission, token, registration |
@@ -57,7 +85,8 @@ the variable is unset, so a misconfigured deploy is never publicly invocable.
 ```
 POST /api/cron/notifications?job=daily        # once a day, mid-morning Manila
 POST /api/cron/notifications?job=reservation  # once a day
-POST /api/cron/notifications                  # both
+POST /api/cron/notifications?job=missions     # hourly: open windows, closing soon
+POST /api/cron/notifications                  # all three
 Authorization: Bearer $CRON_SECRET
 ```
 

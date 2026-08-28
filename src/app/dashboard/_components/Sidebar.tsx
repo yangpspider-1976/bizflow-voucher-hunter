@@ -141,6 +141,9 @@ const staffLabels = new Set([
   "Transactions",
   // A partner's own staff need to see what they owe and what they are owed.
   "LP Billing",
+  // Scoped by the pages behind it: a partner writes campaigns for its own
+  // business and reviews its own evidence, and sees nothing else.
+  "Levels & Missions",
   "Scan & Redeem",
 ]);
 

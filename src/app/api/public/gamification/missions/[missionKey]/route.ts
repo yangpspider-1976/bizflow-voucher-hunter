@@ -12,6 +12,28 @@ const paramsSchema = z.object({ missionKey: z.string().min(1).max(64) });
 
 export const dynamic = "force-dynamic";
 
+/**
+ * An optional position, for location-gated missions only.
+ *
+ * Query parameters rather than a body because this is a GET. Absent is the
+ * normal case: a player who has not granted location consent still sees every
+ * area campaign, marked OUT_OF_AREA until they do.
+ */
+function locationFrom(url: URL) {
+  const latitude = Number(url.searchParams.get("lat"));
+  const longitude = Number(url.searchParams.get("lng"));
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  const accuracy = Number(url.searchParams.get("acc"));
+  return {
+    latitude,
+    longitude,
+    ...(Number.isFinite(accuracy) && accuracy >= 0 ? { accuracyMeters: accuracy } : {}),
+    ...(url.searchParams.get("mock") === "1" ? { mocked: true } : {}),
+  };
+}
+
+
 /** One mission's details and this player's progress on it. */
 export async function GET(
   request: Request,
@@ -20,6 +42,7 @@ export async function GET(
   try {
     const phone = await requireSignedInCustomerPhone(request);
     const { missionKey } = paramsSchema.parse(params);
+    const location = locationFrom(new URL(request.url));
 
     const walletId = await resolveWallet(phone);
     await ensureTodaysMissions(walletId);
@@ -35,6 +58,7 @@ export async function GET(
         level: levelForXp(levels, lifetimeXp).level,
         lifetimeXp,
         date: manilaDate(),
+        location,
       });
       return cards.find((candidate) => candidate.missionKey === missionKey);
     });

@@ -1,8 +1,10 @@
 import { sweepExpiredPersonalData } from "@/server/account-deletion";
 import { assertCronAuth } from "@/server/cron-auth";
+import { runAnomalyScan } from "@/server/gamification/anomaly";
 import { fail, ok } from "@/server/errors";
 import { processPendingEvents } from "@/server/gamification/events";
 import { expireMissions } from "@/server/gamification/missions";
+import { sweepExpiredProofFiles } from "@/server/gamification/proofs";
 import { runReconciliation } from "@/server/reconciliation";
 
 export const dynamic = "force-dynamic";
@@ -25,16 +27,26 @@ async function run(request: Request) {
   try {
     assertCronAuth(request);
     const purged = await sweepExpiredPersonalData();
+    // Evidence images have their own retention clock: the decision row outlives
+    // the photo, so this drops the picture and keeps why it was approved.
+    const proofFiles = await sweepExpiredProofFiles();
     // Missions whose day ended without being finished, and any event the rules
     // engine could not apply first time. Both are cheap and both are the kind
     // of arrears that compound quietly if nothing sweeps them.
     const missions = await expireMissions();
     const events = await processPendingEvents();
+    // Yesterday and today, every night. Signals are keyed per detector per
+    // player per day, so a scan that overlaps the previous one raises nothing
+    // twice and cannot undo a decision an operator already made.
+    const anomalies = await runAnomalyScan();
     const reconciliation = await runReconciliation();
     return ok({
       purged,
+      proofFilesPurged: proofFiles,
       missionsExpired: missions.expired,
+      quotaReleased: missions.released,
       events,
+      anomalies,
       reconciliation: {
         clean: reconciliation.clean,
         balanceDrift: reconciliation.balanceDrift.length,

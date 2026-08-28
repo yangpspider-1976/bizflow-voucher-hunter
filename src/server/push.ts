@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { all, getDb, one, run, type Exec } from "@/server/db";
+import { manilaClock, manilaDate, withinWindow } from "@/server/gamification/time";
 
 /**
  * Push notifications via Expo's push service.
@@ -16,13 +17,14 @@ const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 /** How long to wait on Expo before giving up and logging the attempt as failed. */
 const SEND_TIMEOUT_MS = Number(process.env.PUSH_TIMEOUT_MS ?? 8000);
 
-export type PushCategory = "daily" | "reservation" | "rewards";
+export type PushCategory = "daily" | "reservation" | "rewards" | "missions";
 
 /** Column on `push_devices` that opts a device out of each category. */
 const CATEGORY_COLUMN: Record<PushCategory, string> = {
   daily: "daily_enabled",
   reservation: "reservation_enabled",
   rewards: "rewards_enabled",
+  missions: "missions_enabled",
 };
 
 export type PushDevice = {
@@ -33,6 +35,18 @@ export type PushDevice = {
   dailyEnabled: boolean;
   reservationEnabled: boolean;
   rewardsEnabled: boolean;
+  missionsEnabled: boolean;
+  /**
+   * Marketing consent, separate from the mission category.
+   *
+   * A player can want to know their evidence was approved (transactional) and
+   * not want to be told about a partner promotion two streets away (marketing).
+   * The requirements treat urgent-mission pushes as the second kind, so they
+   * need both switches on.
+   */
+  marketingEnabled: boolean;
+  /** False when the player has chosen to be notified at any hour. */
+  quietHoursEnabled: boolean;
 };
 
 type Row = any;
@@ -46,6 +60,9 @@ function mapDevice(row: Row): PushDevice {
     dailyEnabled: Number(row.daily_enabled) === 1,
     reservationEnabled: Number(row.reservation_enabled) === 1,
     rewardsEnabled: Number(row.rewards_enabled) === 1,
+    missionsEnabled: Number(row.missions_enabled ?? 1) === 1,
+    marketingEnabled: Number(row.marketing_enabled ?? 1) === 1,
+    quietHoursEnabled: Number(row.quiet_hours_enabled ?? 1) === 1,
   };
 }
 
@@ -120,6 +137,9 @@ export async function setPushPreferences(input: {
   daily?: boolean;
   reservation?: boolean;
   rewards?: boolean;
+  missions?: boolean;
+  marketing?: boolean;
+  quietHours?: boolean;
 }) {
   const db = await getDb();
   const sets: string[] = [];
@@ -135,6 +155,18 @@ export async function setPushPreferences(input: {
   if (input.rewards !== undefined) {
     sets.push("rewards_enabled = ?");
     args.push(input.rewards ? 1 : 0);
+  }
+  if (input.missions !== undefined) {
+    sets.push("missions_enabled = ?");
+    args.push(input.missions ? 1 : 0);
+  }
+  if (input.marketing !== undefined) {
+    sets.push("marketing_enabled = ?");
+    args.push(input.marketing ? 1 : 0);
+  }
+  if (input.quietHours !== undefined) {
+    sets.push("quiet_hours_enabled = ?");
+    args.push(input.quietHours ? 1 : 0);
   }
   if (sets.length === 0) return listPushDevices(input.phone);
 
@@ -155,6 +187,23 @@ export type PushMessage = {
    * for anything a scheduler might replay — `daily:<phone>:<manila-date>`.
    */
   dedupeKey?: string;
+  /**
+   * Marketing rather than transactional. Delivered only to devices that also
+   * left marketing consent on, and counted against the daily cap below.
+   */
+  marketing?: boolean;
+  /**
+   * Manila blackout hours. A device whose owner turned quiet hours off is sent
+   * to anyway; everyone else waits. Supplied by the caller rather than read
+   * here, because the window is an economy setting an operator publishes and
+   * this file is transport.
+   */
+  quietHours?: { start: string; end: string } | null;
+  /**
+   * The most messages of this category one phone may receive in a Manila day.
+   * Null is uncapped, which is right for anything transactional.
+   */
+  dailyCap?: number | null;
 };
 
 export type PushResult = {
@@ -184,11 +233,30 @@ export async function sendPush(message: PushMessage): Promise<PushResult> {
       }
     }
 
+    // A per-person ceiling on how often one category may interrupt somebody.
+    // Counted on delivered messages rather than attempts, so a run that was
+    // itself skipped does not use up somebody else’s quiet evening.
+    if (message.dailyCap !== null && message.dailyCap !== undefined) {
+      const today = manilaDate();
+      const sentToday = await one(
+        db,
+        `SELECT COUNT(*) AS total FROM push_logs
+         WHERE phone = ? AND category = ? AND status = 'sent' AND created_at >= ?`,
+        [message.phone, message.category, `${today}T00:00:00.000Z`],
+      );
+      if (Number(sentToday?.total ?? 0) >= message.dailyCap) {
+        result.skipped += 1;
+        return result;
+      }
+    }
+
     const column = CATEGORY_COLUMN[message.category];
+    const clauses = [`${column} = 1`];
+    if (message.marketing) clauses.push("marketing_enabled = 1");
     const devices = (
       await all(
         db,
-        `SELECT * FROM push_devices WHERE phone = ? AND ${column} = 1`,
+        `SELECT * FROM push_devices WHERE phone = ? AND ${clauses.join(" AND ")}`,
         [message.phone],
       )
     ).map(mapDevice);
@@ -198,8 +266,22 @@ export async function sendPush(message: PushMessage): Promise<PushResult> {
       return result;
     }
 
+    // Quiet hours are per device, because the setting is. A household phone
+    // that opted out of them still rings; the one that did not, does not.
+    const quiet = message.quietHours ?? null;
+    const inBlackout = quiet
+      ? withinWindow(manilaClock(), { startTime: quiet.start, endTime: quiet.end })
+      : false;
+    const wakeable = inBlackout
+      ? devices.filter((device) => !device.quietHoursEnabled)
+      : devices;
+    if (wakeable.length === 0) {
+      result.skipped += 1;
+      return result;
+    }
+
     const tickets = await deliver(
-      devices.map((device) => ({
+      wakeable.map((device) => ({
         to: device.expoPushToken,
         title: message.title,
         body: message.body,
@@ -209,7 +291,7 @@ export async function sendPush(message: PushMessage): Promise<PushResult> {
       })),
     );
 
-    for (const [index, device] of devices.entries()) {
+    for (const [index, device] of wakeable.entries()) {
       const ticket = tickets[index];
       const ok = ticket?.status === "ok";
       if (ok) result.sent += 1;

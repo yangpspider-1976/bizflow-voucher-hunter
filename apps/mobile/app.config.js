@@ -81,7 +81,17 @@ module.exports = {
       // The customer app only displays QR codes; scanning is staff-only and stays
       // on the web. Nothing here may request SMS permissions — that is a Play
       // restricted permission and the OTP is sent server-side anyway.
-      permissions: [],
+      //
+      // Location is here for one feature only: an urgent mission confined to a
+      // radius around a partner. It is requested at the moment somebody taps
+      // Join on one of those, never at launch, and the app works without it —
+      // every other mission ignores it. There is deliberately no CAMERA
+      // permission: evidence is picked from the gallery, which on modern
+      // Android needs no permission at all.
+      permissions: [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+      ],
       blockedPermissions: [
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
@@ -106,6 +116,22 @@ module.exports = {
       ],
       "expo-secure-store",
       "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          // Gallery only. A receipt is photographed with the camera app and
+          // picked from the roll, which keeps CAMERA off the manifest.
+          photosPermission:
+            "Voucher Hunt needs access to your photos so you can send a receipt or photo as mission evidence.",
+        },
+      ],
+      [
+        "expo-location",
+        {
+          locationAlwaysAndWhenInUsePermission:
+            "Voucher Hunt uses your location only to check you are near a partner when you join a nearby mission.",
+        },
+      ],
       [
         "expo-notifications",
         {

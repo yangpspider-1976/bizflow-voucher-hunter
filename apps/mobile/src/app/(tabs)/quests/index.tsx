@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import type { MissionCard } from "@bizflow/shared";
 
-import { claimMission } from "@/api/client";
+import { claimMission, joinMission } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
@@ -13,6 +13,7 @@ import {
   useGamificationFocusRefresh,
 } from "@/gamification/GamificationContext";
 import { LevelCard } from "@/gamification/LevelCard";
+import { readMissionLocation } from "@/gamification/location";
 import { MissionRow } from "@/gamification/MissionRow";
 import { LevelUpCelebration } from "@/gamification/LevelUpCelebration";
 import { UnlockCelebration } from "@/gamification/UnlockCelebration";
@@ -50,16 +51,27 @@ export default function QuestsScreen() {
   // screen shows is re-read every time it comes into view rather than once.
   useGamificationFocusRefresh();
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
+  const [joiningKey, setJoiningKey] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
 
+  // The Urgent tab is everything that is not the daily set. A partner or
+  // onboarding campaign is an urgent mission as far as a player is concerned,
+  // and giving each its own tab would be three tabs for one idea.
   const missions = useMemo(
-    () => (profile?.missions ?? []).filter((mission) => mission.type === tab),
+    () =>
+      (profile?.missions ?? []).filter((mission) =>
+        tab === "DAILY" ? mission.type === "DAILY" : mission.type !== "DAILY",
+      ),
     [profile, tab],
   );
 
-  const doneToday = useMemo(
-    () => (profile?.missions ?? []).filter((mission) => mission.state === "CLAIMED").length,
+  const daily = useMemo(
+    () => (profile?.missions ?? []).filter((mission) => mission.type === "DAILY"),
     [profile],
+  );
+  const doneToday = useMemo(
+    () => daily.filter((mission) => mission.state === "CLAIMED").length,
+    [daily],
   );
 
   const onClaim = useCallback(
@@ -79,6 +91,46 @@ export default function QuestsScreen() {
       }
     },
     [refresh, t, token],
+  );
+
+  /**
+   * Joins an urgent campaign.
+   *
+   * Location is read only for a campaign that has a radius, and only at this
+   * moment — a permission prompt with no visible reason is the one people deny.
+   * The server still does the radius test; this only supplies the measurement.
+   */
+  const onJoin = useCallback(
+    async (mission: MissionCard) => {
+      if (!token) return;
+      setJoiningKey(mission.missionKey);
+      setClaimError(null);
+      try {
+        let location = null;
+        if (mission.area) {
+          const reading = await readMissionLocation();
+          if (!reading.ok) {
+            setClaimError(t("location.needed"));
+            return;
+          }
+          location = reading.location;
+        }
+        await joinMission(mission.missionKey, token, location);
+        await refresh();
+      } catch (caught) {
+        setClaimError(caught instanceof Error ? caught.message : t("mission.joinFailed"));
+      } finally {
+        setJoiningKey(null);
+      }
+    },
+    [refresh, t, token],
+  );
+
+  const onOpen = useCallback(
+    (mission: MissionCard) => {
+      router.push(`/quests/${encodeURIComponent(mission.missionKey)}` as Href);
+    },
+    [router],
   );
 
   if (isLoading && !profile) {
@@ -113,7 +165,7 @@ export default function QuestsScreen() {
       refreshing={isLoading}
       subtitle={t("quests.subtitle", {
         done: doneToday,
-        total: profile.missions.length,
+        total: daily.length,
       })}
       title={t("quests.title")}
     >
@@ -164,9 +216,12 @@ export default function QuestsScreen() {
           missions.map((mission) => (
             <MissionRow
               claiming={claimingKey === mission.missionKey}
+              joining={joiningKey === mission.missionKey}
               key={`${mission.missionKey}:${mission.definitionVersion}`}
               mission={mission}
               onClaim={onClaim}
+              onJoin={onJoin}
+              onOpen={onOpen}
             />
           ))
         )}

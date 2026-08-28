@@ -5,6 +5,7 @@ import {
   centavosToMoney,
   manilaDateParts,
 } from "@/server/rewards-network";
+import { partnerGamificationStatement } from "@/server/gamification/settlement";
 import { BillingActions } from "../_components/BillingActions";
 import { ScopeSelector } from "../_components/ScopeSelector";
 
@@ -59,6 +60,14 @@ export default async function BillingPage({
   const business =
     visible.find((item) => item.id === searchParams.business) ?? visible[0];
   const overview = await businessBillingOverview(business.id);
+  // The five lines §6.2 asks the settlement report to separate. Two of them are
+  // the net above; the other three are new with levels and missions and are
+  // reported without being billed, because the settlement policy itself has not
+  // changed.
+  const gamification = await partnerGamificationStatement({
+    businessId: business.id,
+    period: manilaDateParts().period,
+  });
   const { current, deposit, deposits, statements } = overview;
   const closable = previousPeriod(manilaDateParts().period);
   const alreadyClosed = statements.some((row) => row.period === closable);
@@ -221,6 +230,56 @@ export default async function BillingPage({
                     : "Manual transfer"}
                 </td>
               </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section className="panel span-12 table-wrap">
+          <div className="admin-topbar">
+            <div>
+              <h2>Where the Loyalty Points went</h2>
+              <p className="muted">
+                Every movement this partner was party to this month, by cause.
+                The two billed lines are the net above. The rest are reported
+                for the record — mission rewards come out of a campaign budget
+                the partner already funded, and a level conversion extinguishes
+                the liability rather than creating one, so neither changes what
+                is owed under the current settlement policy.
+              </p>
+            </div>
+            <a
+              className="button secondary"
+              href={`/api/dashboard/rewards/settlements/gamification?business=${business.id}&period=${gamification.period}&format=csv`}
+            >
+              Export CSV
+            </a>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Line</th>
+                <th>Movements</th>
+                <th>Amount</th>
+                <th>In the bill</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gamification.lines.map((line) => (
+                <tr key={line.kind}>
+                  <td>
+                    {line.label}
+                    <br />
+                    <span className="muted">{line.note}</span>
+                  </td>
+                  <td className="muted">{line.count}</td>
+                  <td>{line.amount}</td>
+                  <td>
+                    <span className={line.billed ? "badge" : "badge neutral"}>
+                      {line.billed ? "Billed" : "Memo"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </section>

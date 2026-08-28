@@ -31,6 +31,7 @@ export function EconomyForm({
   const [reviewAt, setReviewAt] = useState(String(economy.reviewThresholdCentavos / 100));
   const [quietStart, setQuietStart] = useState(economy.quietHours.start);
   const [quietEnd, setQuietEnd] = useState(economy.quietHours.end);
+  const [risk, setRisk] = useState(economy.risk);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -53,6 +54,7 @@ export function EconomyForm({
           dailyLpGrantCapCentavos: Math.round(Number(dailyCap) * 100),
           reviewThresholdCentavos: Math.round(Number(reviewAt) * 100),
           quietHours: { start: quietStart, end: quietEnd },
+          risk,
           note: note || undefined,
         }),
       });
@@ -66,53 +68,91 @@ export function EconomyForm({
     }
   }
 
-  return (
-    <div className="form-grid">
-      <label>
-        XP per Loyalty Point
-        <input onChange={(event) => setXpPerLp(event.target.value)} value={xpPerLp} />
-      </label>
-      <label>
-        Minimum conversion (LP)
-        <input onChange={(event) => setMinLp(event.target.value)} value={minLp} />
-      </label>
-      <label>
-        Quick-pick amounts (LP, comma separated)
-        <input onChange={(event) => setPresets(event.target.value)} value={presets} />
-      </label>
-      <label>
-        Daily LP reward cap per player
-        <input onChange={(event) => setDailyCap(event.target.value)} value={dailyCap} />
-      </label>
-      <label>
-        Hold a single grant above (LP)
-        <input onChange={(event) => setReviewAt(event.target.value)} value={reviewAt} />
-      </label>
-      <label>
-        Quiet hours start (Manila)
-        <input onChange={(event) => setQuietStart(event.target.value)} value={quietStart} />
-      </label>
-      <label>
-        Quiet hours end (Manila)
-        <input onChange={(event) => setQuietEnd(event.target.value)} value={quietEnd} />
-      </label>
-      <label>
-        Why (recorded on the audit trail)
-        <input
-          onChange={(event) => setNote(event.target.value)}
-          placeholder="Reduced the ad payout after the November review"
-          value={note}
-        />
-      </label>
+  /** Every risk threshold is the same control; only the label differs. */
+  const riskFields: [keyof typeof risk, string][] = [
+    ["adsPerDay", "Rewarded ads per day"],
+    ["qrPerDay", "QR redemptions per day"],
+    ["referralsPerDay", "Referrals per day"],
+    ["reviewsPerDay", "Reviews per day"],
+    ["walletsPerDevice", "Accounts sharing one device"],
+    ["rejectedProofs", "Rejected evidence in a week"],
+    ["holdScore", "Signal score that holds rewards"],
+  ];
 
-      <div className="form-actions">
+  return (
+    <>
+      <div className="admin-form-grid">
+        <label className="field">
+          <span>XP per Loyalty Point</span>
+          <input onChange={(event) => setXpPerLp(event.target.value)} value={xpPerLp} />
+        </label>
+        <label className="field">
+          <span>Minimum conversion (LP)</span>
+          <input onChange={(event) => setMinLp(event.target.value)} value={minLp} />
+        </label>
+        <label className="field">
+          <span>Quick-pick amounts (LP, comma separated)</span>
+          <input onChange={(event) => setPresets(event.target.value)} value={presets} />
+        </label>
+        <label className="field">
+          <span>Daily LP reward cap per player</span>
+          <input onChange={(event) => setDailyCap(event.target.value)} value={dailyCap} />
+        </label>
+        <label className="field">
+          <span>Hold a single grant above (LP)</span>
+          <input onChange={(event) => setReviewAt(event.target.value)} value={reviewAt} />
+        </label>
+        <label className="field">
+          <span>Quiet hours start (Manila)</span>
+          <input onChange={(event) => setQuietStart(event.target.value)} value={quietStart} />
+        </label>
+        <label className="field">
+          <span>Quiet hours end (Manila)</span>
+          <input onChange={(event) => setQuietEnd(event.target.value)} value={quietEnd} />
+        </label>
+      </div>
+
+      <h3>Risk thresholds</h3>
+      <p className="muted">
+        What the nightly detectors treat as too much for one player in a day.
+        Raising one because a real campaign tripped it is a number an operator
+        changes, not a deploy. Past the hold score a player keeps earning and
+        their rewards wait for approval — nothing is taken.
+      </p>
+      <div className="admin-form-grid">
+        {riskFields.map(([key, label]) => (
+          <label className="field" key={key}>
+            <span>{label}</span>
+            <input
+              onChange={(event) =>
+                setRisk((current) => ({ ...current, [key]: Number(event.target.value) }))
+              }
+              type="number"
+              value={risk[key]}
+            />
+          </label>
+        ))}
+      </div>
+
+      <div className="admin-form-grid">
+        <label className="field">
+          <span>Why (recorded on the audit trail)</span>
+          <input
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Reduced the ad payout after the November review"
+            value={note}
+          />
+        </label>
+      </div>
+
+      <div className="admin-form-actions">
         <button className="button" disabled={busy} onClick={publish} type="button">
           {busy ? "Publishing…" : `Publish version ${version + 1}`}
         </button>
         {saved ? <span className="badge success">{saved}</span> : null}
         {error ? <span className="badge warning">{error}</span> : null}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -212,7 +252,7 @@ export function LevelLadderForm({
         </tbody>
       </table>
 
-      <div className="form-actions">
+      <div className="admin-form-actions">
         <button className="button" disabled={busy} onClick={publish} type="button">
           {busy ? "Publishing…" : `Publish version ${version + 1}`}
         </button>
@@ -258,7 +298,7 @@ export function BackfillButton() {
   }
 
   return (
-    <div className="form-actions">
+    <div className="admin-form-actions">
       <button className="button secondary" disabled={busy} onClick={run} type="button">
         {busy ? "Running…" : "Run backfill"}
       </button>

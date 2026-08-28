@@ -166,6 +166,52 @@ export type MissionWindow = {
   endTime: string;
 };
 
+/**
+ * Who an urgent mission is offered to.
+ *
+ * Evaluated on the server against the player's own history — never sent to the
+ * client to decide — but carried in the card so a locked mission can explain
+ * itself rather than simply not appearing.
+ */
+export type MissionSegment = "all" | "new" | "returning" | "dormant";
+
+/** A circle on the map an urgent mission is confined to. */
+export type MissionArea = {
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+};
+
+export type MissionAudience = {
+  segment: MissionSegment;
+  /**
+   * Days of silence that make a player "dormant", or days since sign-up that
+   * make them "new". Ignored by the `all` segment.
+   */
+  segmentDays?: number;
+  area?: MissionArea;
+  /** True when only a partner the player has never visited counts. */
+  firstVisitOnly?: boolean;
+};
+
+/** Whether a limited campaign takes a place when a player joins, or when they finish. */
+export type MissionQuotaMode = "RESERVE_ON_JOIN" | "ON_COMPLETION";
+
+export type MissionProofKind = "photo" | "receipt" | "text";
+
+export type MissionProofStatus = "Pending" | "Approved" | "Rejected" | "Superseded";
+
+/** What the app needs to render the evidence half of a mission. */
+export type MissionProofState = {
+  proofId: string;
+  kind: MissionProofKind;
+  status: MissionProofStatus;
+  submittedAt: string;
+  reviewedAt?: string;
+  /** Why an operator turned it down, shown verbatim so the player can fix it. */
+  rejectReason?: string;
+};
+
 export type MissionCard = {
   missionKey: string;
   definitionVersion: number;
@@ -194,6 +240,45 @@ export type MissionCard = {
   expiresAt: string;
   /** True when completing pays out without the user tapping Claim. */
   autoClaim: boolean;
+
+  /* Urgent missions ---------------------------------------------------------
+   *
+   * A daily mission is always the player's own row; an urgent one is a campaign
+   * they may not have joined yet, so its card also has to describe the campaign
+   * itself — how long it runs, how many places are left, and why they cannot
+   * join if they cannot.
+   */
+
+  /** True when the player has no instance yet and tapping Join would create one. */
+  joinable: boolean;
+  /** Places left in a limited campaign, or null when it is unlimited. */
+  quotaRemaining: number | null;
+  /** ISO. When the campaign itself opens, or null if it already has. */
+  startsAt: string | null;
+  /** ISO. When the campaign closes, or null when it runs until stopped. */
+  endsAt: string | null;
+  /** True when finishing needs a photo, receipt or note an operator approves. */
+  requiresProof: boolean;
+  /** The evidence already submitted for this instance, newest first. */
+  proof: MissionProofState | null;
+  /** Set when the mission is confined to an area, so the app can show a map. */
+  area: MissionArea | null;
+  /** Metres from the player to `area`, when they shared a location. */
+  distanceMeters: number | null;
+  /**
+   * Why this mission cannot be joined right now, or null when it can be.
+   * A named reason rather than a hidden card: the requirements are explicit
+   * that a restriction should read as a goal.
+   */
+  ineligibleReason:
+    | "LEVEL_REQUIRED"
+    | "QUOTA_EXHAUSTED"
+    | "NOT_ELIGIBLE"
+    | "OUT_OF_AREA"
+    | "NOT_STARTED"
+    | null;
+  /** Optional link to the campaign's own terms. */
+  termsUrl: string | null;
 };
 
 /* Achievements -------------------------------------------------------------- */
@@ -320,4 +405,15 @@ export type MissionClaimResult = {
   leveledUp: boolean;
   /** Achievement tiers this claim happened to unlock, if any. */
   unlocked: AchievementUnlockNotice[];
+};
+
+/** What the server says after a player submits evidence for a mission. */
+export type MissionProofResult = {
+  missionKey: string;
+  /**
+   * VERIFYING while an operator has yet to decide. Auto-approved evidence
+   * (none is, today) would come back CLAIMABLE or CLAIMED instead.
+   */
+  state: MissionState;
+  proof: MissionProofState;
 };

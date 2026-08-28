@@ -13,6 +13,7 @@ import type {
   LoyaltyDailyStatus,
   MissionCard,
   MissionClaimResult,
+  MissionProofResult,
   MissionState,
   PointConversionResult,
   RewardLedgerEntry,
@@ -652,13 +653,71 @@ export function claimMission(
   );
 }
 
+/**
+ * A position the app measured, sent only for a mission with a radius.
+ *
+ * The server does the radius test, the accuracy check and the mock-signal
+ * refusal — this is a measurement, not a claim about eligibility.
+ */
+export type MissionLocation = {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+  mocked?: boolean;
+};
+
 export function joinMission(
   missionKey: string,
   token: string,
-): Promise<{ missionKey: string; state: MissionState }> {
+  location?: MissionLocation | null,
+): Promise<{ missionKey: string; state: MissionState; requiresProof: boolean }> {
   return apiRequest(
     `/api/public/gamification/missions/${encodeURIComponent(missionKey)}/join`,
-    { method: "POST", body: {}, token },
+    { method: "POST", body: { location: location ?? undefined }, token },
+  );
+}
+
+/** One mission, including this player's progress and any evidence on it. */
+export function getMission(
+  missionKey: string,
+  token: string,
+  location?: MissionLocation | null,
+): Promise<MissionCard> {
+  const query = location
+    ? `?lat=${location.latitude}&lng=${location.longitude}${
+        location.accuracyMeters ? `&acc=${Math.round(location.accuracyMeters)}` : ""
+      }${location.mocked ? "&mock=1" : ""}`
+    : "";
+  return apiRequest<MissionCard>(
+    `/api/public/gamification/missions/${encodeURIComponent(missionKey)}${query}`,
+    { token },
+  );
+}
+
+/**
+ * Sends evidence for a mission a person has to approve.
+ *
+ * The image is base64 because the rest of this client speaks JSON and one
+ * capped-size photo is not worth a second transport. Downscaling happens before
+ * this is called — the server refuses anything over two megabytes, and a
+ * refusal after a slow upload on mobile data is a bad way to find that out.
+ */
+export function submitMissionProof(
+  input: {
+    missionKey: string;
+    kind: "photo" | "receipt" | "text";
+    note?: string;
+    file?: { contentBase64: string; contentType: string } | null;
+  },
+  token: string,
+): Promise<MissionProofResult> {
+  return apiRequest<MissionProofResult>(
+    `/api/public/gamification/missions/${encodeURIComponent(input.missionKey)}/proof`,
+    {
+      method: "POST",
+      body: { kind: input.kind, note: input.note, file: input.file ?? null },
+      token,
+    },
   );
 }
 

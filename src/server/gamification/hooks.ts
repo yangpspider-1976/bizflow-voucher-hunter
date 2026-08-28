@@ -13,7 +13,26 @@
  * the same event and are counted once.
  */
 import { getDb, one } from "@/server/db";
-import { ingestEventQuietly, type IngestResult, IGNORED_RESULT } from "./events";
+import { ingestEventQuietly, type IngestInput, type IngestResult, IGNORED_RESULT } from "./events";
+import { notifyGamificationOutcome } from "./notify";
+
+/**
+ * Ingests an event and then tells the player what it earned them.
+ *
+ * The notification is deliberately outside the ingest: `ingestEventQuietly`
+ * owns its own transaction and has committed by the time it returns, so a push
+ * sent here cannot be sitting inside an open write transaction. It also cannot
+ * be sent for a reward that was rolled back, which is the failure mode worth
+ * caring about — nobody minds a quiet promotion, everybody minds being told
+ * about points they do not have.
+ */
+async function ingestAndNotify(input: IngestInput): Promise<IngestResult> {
+  const result = await ingestEventQuietly(input);
+  if (result.accepted) {
+    await notifyGamificationOutcome({ phone: input.phone, unlocked: result.unlocked });
+  }
+  return result;
+}
 
 /** A finished hunt spin: the player has seen what they drew. */
 export function onHuntComplete(input: {
@@ -23,7 +42,7 @@ export function onHuntComplete(input: {
   businessId?: string | null;
   occurredAt?: string;
 }): Promise<IngestResult> {
-  return ingestEventQuietly({
+  return ingestAndNotify({
     eventName: "hunt_complete",
     phone: input.phone,
     source: "voucher-engine",
@@ -43,7 +62,7 @@ export function onVoucherSelected(input: {
   campaignId: string;
   businessId?: string | null;
 }): Promise<IngestResult> {
-  return ingestEventQuietly({
+  return ingestAndNotify({
     eventName: "voucher_select",
     phone: input.phone,
     source: "voucher-engine",
@@ -70,7 +89,7 @@ export function onQrRedeemed(input: {
   objectId: string;
   amountCentavos?: number | null;
 }): Promise<IngestResult> {
-  return ingestEventQuietly({
+  return ingestAndNotify({
     eventName: "qr_redeem",
     phone: input.phone,
     source: "redemption",
@@ -104,7 +123,7 @@ export function onReferralVerified(input: {
   referralRewardId: string;
   campaignId?: string;
 }): Promise<IngestResult> {
-  return ingestEventQuietly({
+  return ingestAndNotify({
     eventName: "referral_verified",
     phone: input.phone,
     source: "referral",
@@ -122,7 +141,7 @@ export function onPurchaseVerified(input: {
   purchaseId: string;
   amountCentavos: number;
 }): Promise<IngestResult> {
-  return ingestEventQuietly({
+  return ingestAndNotify({
     eventName: "purchase_verified",
     phone: input.phone,
     source: "rewards-network",

@@ -857,6 +857,86 @@ CREATE TABLE IF NOT EXISTS achievement_backfill_jobs (
   started_at TEXT NOT NULL,
   finished_at TEXT
 );
+
+-- Phase 2: evidence review -------------------------------------------------
+--
+-- What a player submitted to prove they did an urgent mission, and what an
+-- operator decided about it. The photo itself is deliberately not here: this
+-- row is read by the review queue, the support screens and the mission engine,
+-- and none of them should be dragging a receipt image along to do their job.
+CREATE TABLE IF NOT EXISTS mission_proofs (
+  id TEXT PRIMARY KEY,
+  user_mission_id TEXT NOT NULL REFERENCES user_missions(id),
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  mission_key TEXT NOT NULL,
+  definition_version INTEGER NOT NULL,
+  partner_id TEXT REFERENCES businesses(id),
+  -- photo | receipt | text
+  kind TEXT NOT NULL,
+  -- Reference into mission_proof_files. Null on a text-only submission.
+  file_ref TEXT,
+  note TEXT,
+  -- Pending | Approved | Rejected | Superseded
+  review_status TEXT NOT NULL DEFAULT 'Pending',
+  reviewer TEXT,
+  reviewed_at TEXT,
+  reject_reason TEXT,
+  -- The rejected submission this one replaces, when a player tries again.
+  supersedes TEXT,
+  submitted_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mission_proofs_queue ON mission_proofs (review_status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_mission_proofs_partner ON mission_proofs (partner_id, review_status);
+CREATE INDEX IF NOT EXISTS idx_mission_proofs_wallet ON mission_proofs (wallet_id, submitted_at);
+
+-- The separate secure store the requirements ask for: an uploaded receipt or
+-- photo, held only as long as the review needs it. Nothing outside the proof
+-- service reads this table, and the retention sweep empties it on a schedule so
+-- an approved mission does not leave someone's receipt lying around forever.
+CREATE TABLE IF NOT EXISTS mission_proof_files (
+  file_ref TEXT PRIMARY KEY,
+  wallet_id TEXT NOT NULL REFERENCES reward_wallets(id),
+  content_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  -- Base64. There is no object store in this deployment, and a pilot's worth of
+  -- size-capped images sits comfortably inside a row.
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mission_proof_files_expiry ON mission_proof_files (expires_at);
+
+-- Phase 3: anomaly detection -----------------------------------------------
+--
+-- One row per (detector, player, day). That unique key is what makes the
+-- detectors safe to re-run as often as anything likes: a sweep that runs twice
+-- raises one signal rather than two, and an operator's decision on it is not
+-- undone by the next pass.
+CREATE TABLE IF NOT EXISTS fraud_signals (
+  id TEXT PRIMARY KEY,
+  wallet_id TEXT REFERENCES reward_wallets(id),
+  phone TEXT,
+  -- ad_replay | shared_device | qr_velocity | referral_ring | review_velocity |
+  -- lp_velocity | proof_rejections
+  signal_key TEXT NOT NULL,
+  -- info | warn | critical
+  severity TEXT NOT NULL DEFAULT 'info',
+  score INTEGER NOT NULL DEFAULT 0,
+  -- The Manila date the detector was looking at, not the day it ran.
+  detected_on TEXT NOT NULL,
+  -- Counts and identifiers only: no raw device data and no personal detail.
+  observation TEXT NOT NULL DEFAULT '{}',
+  -- Open | Cleared | Actioned
+  status TEXT NOT NULL DEFAULT 'Open',
+  action_taken TEXT,
+  actioned_by TEXT,
+  actioned_at TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (signal_key, wallet_id, detected_on)
+);
+CREATE INDEX IF NOT EXISTS idx_fraud_signals_open ON fraud_signals (status, severity, created_at);
 `;
 
 let client: Client | null = null;
@@ -894,6 +974,9 @@ function ensureReady(): Promise<void> {
 const DATA_TABLES = [
   // Gamification first: every one of these references reward_wallets or
   // businesses, so they have to be gone before those rows can be.
+  "mission_proof_files",
+  "mission_proofs",
+  "fraud_signals",
   "ad_verifications",
   "achievement_backfill_jobs",
   "gamification_events",
@@ -986,6 +1069,7 @@ async function init() {
   await ensureRewardsSchema(c);
   await ensureSmsSchema(c);
   await ensureAuthSchema(c);
+  await ensureGamificationSchema(c);
   // Levels, missions and achievements are economy configuration, not demo
   // fixtures: an install with none of them has no working reward engine, so the
   // catalogue is seeded even where the sample data is suppressed.
@@ -1047,6 +1131,60 @@ async function hasColumn(c: Client, table: string, column: string) {
     args: [table],
   });
   return result.rows.some((row) => String((row as Row).column_name) === column);
+}
+
+/**
+ * Columns the Phase 2 and Phase 3 gamification work added to tables that
+ * already existed.
+ *
+ * `CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there,
+ * so every one of these has to be added explicitly or a deployed database keeps
+ * the old shape and every insert naming a new column fails. Each carries a
+ * default, because the rows already in the table have to mean something the
+ * moment the column appears: an urgent mission written before quota modes
+ * existed decrements its quota on completion, and a device registered before
+ * the mission category existed is opted in to it, which is what those rows
+ * already meant.
+ */
+async function ensureGamificationSchema(c: Client) {
+  const columnAdds: Array<[string, string, string]> = [
+    // RESERVE_ON_JOIN | ON_COMPLETION — whether tapping Join takes a place.
+    ["mission_definitions", "quota_mode", "TEXT NOT NULL DEFAULT 'ON_COMPLETION'"],
+    ["mission_definitions", "requires_proof", "INTEGER NOT NULL DEFAULT 0"],
+    // JSON: segment, dormancy window, area (lat/lng/radius), partner history.
+    ["mission_definitions", "audience_json", "TEXT NOT NULL DEFAULT '{}'"],
+    ["mission_definitions", "completed_count", "INTEGER NOT NULL DEFAULT 0"],
+    // app | push | both. Governs whether publishing also notifies.
+    ["mission_definitions", "exposure_channel", "TEXT NOT NULL DEFAULT 'app'"],
+    ["mission_definitions", "push_sent_at", "TEXT"],
+    ["mission_definitions", "terms_url", "TEXT"],
+    ["mission_definitions", "localization_key", "TEXT"],
+    // The partner-authors / operations-approves workflow.
+    ["mission_definitions", "submitted_by", "TEXT"],
+    ["mission_definitions", "submitted_at", "TEXT"],
+    ["mission_definitions", "approved_at", "TEXT"],
+    ["mission_definitions", "review_note", "TEXT"],
+    ["user_missions", "proof_id", "TEXT"],
+    // A reserved quota place is given back exactly once, however many times the
+    // expiry sweep passes over the row.
+    ["user_missions", "quota_released", "INTEGER NOT NULL DEFAULT 0"],
+    ["push_devices", "missions_enabled", "INTEGER NOT NULL DEFAULT 1"],
+    // Urgent missions are marketing, and the requirements are explicit that they
+    // honour marketing consent separately from transactional notifications.
+    ["push_devices", "marketing_enabled", "INTEGER NOT NULL DEFAULT 1"],
+    ["push_devices", "quiet_hours_enabled", "INTEGER NOT NULL DEFAULT 1"],
+    // Graduated holds. Clear | Watch | Held | Suspended — set by the anomaly
+    // detectors and cleared by an administrator, never by the player.
+    ["reward_wallets", "risk_state", "TEXT NOT NULL DEFAULT 'Clear'"],
+    ["reward_wallets", "risk_reason", "TEXT"],
+    ["reward_wallets", "risk_updated_at", "TEXT"],
+  ];
+
+  for (const [table, column, definition] of columnAdds) {
+    if (!(await hasColumn(c, table, column))) {
+      await c.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
 }
 
 async function ensureRewardsSchema(c: Client) {

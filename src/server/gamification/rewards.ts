@@ -17,10 +17,10 @@
 import crypto from "node:crypto";
 import type { FundingSource, RewardLine, RewardSummary } from "@bizflow/shared";
 import { levelForXp } from "@bizflow/shared";
-import { one, run, type Exec } from "@/server/db";
+import { all, one, run, type Exec } from "@/server/db";
 import { AppError } from "@/server/errors";
 import { centavosToLoyaltyPoints, recordRewardAudit } from "@/server/rewards-network";
-import { loadEconomy, loadLevels, type EconomyConfig } from "./config";
+import { loadEconomy, loadLevels, parseRewardLines, type EconomyConfig } from "./config";
 import { manilaDate, manilaMidnightUtc } from "./time";
 
 const isoNow = () => new Date().toISOString();
@@ -143,7 +143,20 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
   // A payout too large to pay on its own authority is recorded and parked. It
   // is not silently dropped: an administrator sees the row and approves or
   // rejects it, which is also what the audit trail needs.
-  const held = requested.lpCentavos > economy.reviewThresholdCentavos;
+  //
+  // A flagged wallet is parked the same way, and that is deliberate. The
+  // alternative — dropping the reward — would mean a legitimate player caught
+  // by a detector does the thing, sees nothing happen, and has no way to ask
+  // about it. Held means the reward exists, is visible to an operator, and is
+  // released or reversed by a person. Read inline rather than through
+  // `anomaly.ts` to keep the reward engine free of a dependency on the
+  // detectors that feed it.
+  const wallet = await one(tx, "SELECT risk_state FROM reward_wallets WHERE id = ?", [
+    input.walletId,
+  ]);
+  const riskState = String(wallet?.risk_state ?? "Clear");
+  const heldForRisk = riskState === "Held" || riskState === "Suspended";
+  const held = heldForRisk || requested.lpCentavos > economy.reviewThresholdCentavos;
 
   const capped = held
     ? { lpCentavos: 0, substitutedXp: 0 }
@@ -181,7 +194,11 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
         funding,
         input.partnerId ?? null,
         held ? "REVIEW_REQUIRED" : "GRANTED",
-        held ? "Above the single-grant review threshold" : null,
+        held
+          ? heldForRisk
+            ? `Wallet is ${riskState.toLowerCase()} pending review`
+            : "Above the single-grant review threshold"
+          : null,
         input.idempotencyKey,
         configVersion,
         JSON.stringify({
@@ -219,7 +236,11 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
       action: "gamification_reward_held",
       entityType: "reward_transaction",
       entityId: rewardTxId,
-      metadata: { walletId: input.walletId, requested: requested.lpCentavos },
+      metadata: {
+        walletId: input.walletId,
+        requested: requested.lpCentavos,
+        reason: heldForRisk ? "risk" : "threshold",
+      },
     });
     const standing = await levelSnapshot(tx, input.walletId);
     return {
@@ -670,6 +691,176 @@ export async function reverseReward(
   });
 
   return { reversalId, xp, lpCentavos };
+}
+
+/**
+ * Settles a reward that was held for approval.
+ *
+ * Two things write `REVIEW_REQUIRED`: a single grant above the review threshold,
+ * and any grant to a wallet the anomaly detectors have flagged. Both park the
+ * reward rather than dropping it, and both need a person to finish the job —
+ * which is what this is. Without it a held reward is owed forever and nobody can
+ * pay it, which is a worse failure than never having held it.
+ *
+ * Approving pays what the transaction asked for, not what was recorded on it: a
+ * held row carries zeroes in `xp_amount` and `lp_centavos` precisely because
+ * nothing was paid, and `reward_json` is the record of what was owed. The daily
+ * LP cap is applied at approval rather than at the original grant, because the
+ * cap is a fact about the day the money actually moves.
+ *
+ * `reference` is the finance reference number §6.2 asks to be recorded against
+ * an approval.
+ */
+export async function settleHeldReward(
+  tx: Exec,
+  input: {
+    rewardTxId: string;
+    actor: string;
+    decision: "Approve" | "Reject";
+    reason: string;
+    reference?: string;
+  },
+) {
+  const held = await one(
+    tx,
+    "SELECT * FROM reward_transactions WHERE id = ? FOR UPDATE",
+    [input.rewardTxId],
+  );
+  if (!held) {
+    throw new AppError("E-REWARD-TX-404", "Reward transaction was not found", 404);
+  }
+  if (String(held.status) !== "REVIEW_REQUIRED") {
+    throw new AppError(
+      "E-REWARD-ALREADY-GRANTED",
+      `That reward is ${String(held.status).toLowerCase()}, not waiting for approval`,
+      409,
+    );
+  }
+
+  const walletId = String(held.wallet_id);
+  const now = isoNow();
+
+  if (input.decision === "Reject") {
+    await run(
+      tx,
+      `UPDATE reward_transactions
+       SET status = 'REJECTED', hold_reason = ?, reviewed_by = ?, reviewed_at = ?
+       WHERE id = ?`,
+      [input.reason, input.actor, now, input.rewardTxId],
+    );
+    await recordRewardAudit(tx, {
+      actorType: "admin",
+      actorId: input.actor,
+      action: "gamification_reward_rejected",
+      entityType: "reward_transaction",
+      entityId: input.rewardTxId,
+      metadata: { reason: input.reason, walletId },
+    });
+    return { rewardTxId: input.rewardTxId, paid: EMPTY_REWARD, decision: input.decision };
+  }
+
+  const { economy, version: configVersion } = await loadEconomy(tx);
+  const requested = summarise(parseRewardLines(String(held.reward_json ?? "[]")));
+  const funding = String(held.funding_source ?? "PLATFORM") as FundingSource;
+  const capped = await applyDailyLpCap(tx, walletId, requested.lpCentavos, economy);
+  const payable: RewardSummary = {
+    xp: requested.xp + capped.substitutedXp,
+    lpCentavos: capped.lpCentavos,
+    lp: capped.lpCentavos > 0 ? centavosToLoyaltyPoints(capped.lpCentavos) : "",
+    huntTickets: requested.huntTickets,
+    badge: requested.badge,
+  };
+
+  await run(
+    tx,
+    `UPDATE reward_transactions
+     SET status = 'GRANTED', xp_amount = ?, lp_centavos = ?, hunt_tickets = ?,
+         hold_reason = NULL, reviewed_by = ?, reviewed_at = ?
+     WHERE id = ?`,
+    [payable.xp, payable.lpCentavos, payable.huntTickets, input.actor, now, input.rewardTxId],
+  );
+
+  if (payable.lpCentavos > 0) {
+    await creditLoyaltyPoints(tx, {
+      walletId,
+      amountCentavos: payable.lpCentavos,
+      funding,
+      partnerId: held.partner_id ? String(held.partner_id) : null,
+      ledgerType:
+        String(held.source_type) === "achievement" ? "achievement_reward" : "mission_reward",
+      sourceType: String(held.source_type),
+      sourceId: String(held.source_id),
+      rewardTxId: input.rewardTxId,
+    });
+  }
+
+  if (payable.huntTickets > 0) {
+    await run(
+      tx,
+      `INSERT OR IGNORE INTO hunt_ticket_ledger
+       (id, wallet_id, source_type, source_id, delta, ticket_date, idempotency_key, created_at)
+       VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
+      [
+        id("htk"),
+        walletId,
+        String(held.source_type),
+        String(held.source_id),
+        payable.huntTickets,
+        `${String(held.idempotency_key)}:ticket`,
+        now,
+      ],
+    );
+  }
+
+  if (payable.xp > 0) {
+    // Keyed on the release, not on the original grant: the original never
+    // credited XP, and reusing its key would be refused by the ledger's unique
+    // index the first time a held reward is approved.
+    await creditXp(tx, {
+      walletId,
+      delta: payable.xp,
+      sourceType: String(held.source_type),
+      sourceId: String(held.source_id),
+      rewardTxId: input.rewardTxId,
+      idempotencyKey: `release:${input.rewardTxId}:xp`,
+      configVersion,
+      metadata: { releasedBy: input.actor },
+    });
+  }
+
+  await recordRewardAudit(tx, {
+    actorType: "admin",
+    actorId: input.actor,
+    action: "gamification_reward_released",
+    entityType: "reward_transaction",
+    entityId: input.rewardTxId,
+    metadata: {
+      reason: input.reason,
+      reference: input.reference ?? null,
+      walletId,
+      xp: payable.xp,
+      lpCentavos: payable.lpCentavos,
+    },
+  });
+
+  return { rewardTxId: input.rewardTxId, paid: payable, decision: input.decision };
+}
+
+/** Rewards parked for a person to decide on, newest first. */
+export async function listHeldRewards(db: Exec, limit = 100) {
+  return all(
+    db,
+    `SELECT rt.id, rt.wallet_id, rt.source_type, rt.source_id, rt.reward_json,
+            rt.funding_source, rt.partner_id, rt.hold_reason, rt.created_at,
+            w.phone, w.risk_state, b.name AS partner_name
+     FROM reward_transactions rt
+     JOIN reward_wallets w ON w.id = rt.wallet_id
+     LEFT JOIN businesses b ON b.id = rt.partner_id
+     WHERE rt.status = 'REVIEW_REQUIRED'
+     ORDER BY rt.created_at ASC
+     LIMIT ?`,
+    [limit],
+  );
 }
 
 function isUniqueViolation(error: unknown) {

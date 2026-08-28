@@ -32,6 +32,21 @@ const ROWS: {
     labelKey: "notifications.rewards",
     copyKey: "notifications.pointsCopy",
   },
+  {
+    key: "missions",
+    labelKey: "notifications.missions",
+    copyKey: "notifications.missionsCopy",
+  },
+  {
+    key: "marketing",
+    labelKey: "notifications.marketing",
+    copyKey: "notifications.marketingCopy",
+  },
+  {
+    key: "quietHours",
+    labelKey: "notifications.quietHours",
+    copyKey: "notifications.quietHoursCopy",
+  },
 ];
 
 /**
