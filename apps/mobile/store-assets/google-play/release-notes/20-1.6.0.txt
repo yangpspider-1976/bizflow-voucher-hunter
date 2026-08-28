@@ -1,0 +1,11 @@
+<en-US>
+Limited-time missions from the partners near you.
+
+• Partner missions with their own rewards and limited places
+• Some open only near a store, or only during quiet hours
+• Send a photo or receipt when a mission needs one checked
+• A locked mission now shows the level and XP that opens it
+• See places left and how long a mission has to run
+• Choose which mission alerts you get, and mute 10 PM to 8 AM
+• Nearby promotions are a separate opt-in you can turn off
+</en-US>

@@ -125,11 +125,36 @@ in item 2 above is real*
 | Name | Yes | Yes — partner staff at redemption | Required to confirm a voucher | App functionality |
 | Email address | Yes | No | Optional | App functionality |
 | Device or other IDs | Yes — Expo push token | Yes — Expo push service | Optional (only if notifications allowed) | App functionality |
-| App interactions | Yes — vouchers, reservations, points, referral opens | No | Required | App functionality, fraud prevention |
+| App interactions | Yes — vouchers, reservations, points, missions, referral opens | No | Required | App functionality, fraud prevention |
+| Photos | Yes — only a photo the customer attaches as mission evidence | Yes — reviewed by the partner the mission belongs to, and by operations | Optional | App functionality |
+| Approximate and precise location | Yes — only when a customer joins a mission with a radius | No | Optional | App functionality, fraud prevention |
 
-**Declare as NOT collected** (verified absent): location, contacts, SMS or call
-logs, photos or videos, files, calendar, health, financial account details,
-purchase history tied to a payment instrument, and any advertising identifier.
+**Declare as NOT collected** (verified absent): contacts, SMS or call logs,
+files, calendar, health, financial account details, purchase history tied to a
+payment instrument, and any advertising identifier.
+
+### Location and photos — new in 1.6.0
+
+Both were declared as not collected up to 1.5.1 and both are collected now.
+**The Data Safety form has to be updated before 1.6.0 is submitted**, or the
+declaration no longer matches the binary. So does the table in
+[PLAY_CONSOLE_ANSWERS.md](PLAY_CONSOLE_ANSWERS.md).
+
+Neither is ambient or background collection, and the form has a place to say so:
+
+- **Location** is read once, in the foreground, at the moment a customer taps
+  Join on a mission confined to a radius. No other screen asks for it, nothing
+  is kept beyond the eligibility decision, and every other mission works with
+  the permission denied. `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`
+  are in the manifest; there is no background location permission.
+- **Photos** are picked from the gallery through the system photo picker, which
+  needs no permission of its own — there is deliberately no `CAMERA` permission
+  and no media-library permission. An uploaded image is held only while the
+  review needs it and is deleted after 90 days (`mission_proof_files`).
+
+Location is collected and not shared. Photos are collected and shared, because
+staff at the partner the mission belongs to review what a customer sends. Both
+are optional: the app is fully usable with both permissions refused.
 
 Two points a reviewer may probe:
 
@@ -175,4 +200,5 @@ Two points a reviewer may probe:
 - [ ] Account deletion path available and documented
 - [ ] Data Safety form submitted per the table above
 - [ ] Release build confirmed to request no SMS permission
+- [ ] Data Safety form updated for location and photos (new in 1.6.0)
 - [ ] Full journey verified against production from a Play internal-testing build
