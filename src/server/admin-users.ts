@@ -1,4 +1,9 @@
 import crypto from "node:crypto";
+import {
+  isPasswordTooShort,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_RULE,
+} from "@/lib/admin-password";
 import { all, getDb, one, run } from "@/server/db";
 import { AppError } from "@/server/errors";
 
@@ -21,7 +26,8 @@ export type AdminUser = {
   lastLoginAt?: string;
 };
 
-export const MIN_PASSWORD_LENGTH = 10;
+// Re-exported so the API routes keep one import for everything about an account.
+export { MIN_PASSWORD_LENGTH };
 
 /**
  * Same construction as the business staff PIN: scrypt with a per-credential
@@ -103,12 +109,8 @@ function resolveBusinessIds(role: AdminUserRole, businessIds: string[]) {
 }
 
 function assertPassword(password: string) {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    throw new AppError(
-      "E-ADMIN-USER-PASSWORD",
-      `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
-      422,
-    );
+  if (isPasswordTooShort(password)) {
+    throw new AppError("E-ADMIN-USER-PASSWORD", PASSWORD_RULE, 422);
   }
 }
 

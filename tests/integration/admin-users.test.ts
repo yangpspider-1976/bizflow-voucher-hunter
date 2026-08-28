@@ -58,6 +58,42 @@ describe("admin user accounts", () => {
     ).rejects.toBeInstanceOf(AppError);
   });
 
+  // The length used to be counted raw, so spaces made a long-enough password.
+  it("rejects a password padded out to the minimum with spaces", async () => {
+    await expect(
+      createAdminUser({ ...owner, password: "              " }),
+    ).rejects.toBeInstanceOf(AppError);
+    await expect(
+      createAdminUser({ ...owner, password: "   pass   " }),
+    ).rejects.toBeInstanceOf(AppError);
+
+    const created = await createAdminUser(owner);
+    await expect(
+      updateAdminUser(
+        created.id,
+        { password: "          " },
+        { email: "someone-else@example.com" },
+      ),
+    ).rejects.toBeInstanceOf(AppError);
+  });
+
+  // Spaces inside a passphrase are ordinary characters, and the stored password
+  // is the one that was typed — not a trimmed copy of it.
+  it("keeps a passphrase with spaces exactly as it was typed", async () => {
+    const created = await createAdminUser({
+      ...owner,
+      password: " correct horse battery ",
+    });
+    const row = await findAdminUserForLogin(created.email);
+
+    expect(verifyPassword(" correct horse battery ", row!.passwordHash)).toBe(
+      true,
+    );
+    expect(verifyPassword("correct horse battery", row!.passwordHash)).toBe(
+      false,
+    );
+  });
+
   it("gives an admin the wildcard scope and pins staff to one business", async () => {
     const admin = await createAdminUser({ ...owner, role: "admin" });
     expect(admin.businessIds).toEqual(["*"]);

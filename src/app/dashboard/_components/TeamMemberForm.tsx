@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  isPasswordTooShort,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_RULE,
+} from "@/lib/admin-password";
 import { api } from "@/lib/api-client";
 import type { AdminUser, AdminUserRole } from "@/server/admin-users";
 import type { Business } from "@/types/voucher";
@@ -64,6 +69,14 @@ export function TeamMemberForm({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    // `minLength` counts spaces, so the browser happily accepts a password made
+    // of them. The server rejects it either way; checking here saves the trip.
+    // Blank is left alone: when editing it means "keep the current password",
+    // and when creating `required` has already stopped it.
+    if (password && isPasswordTooShort(password)) {
+      setError(`${PASSWORD_RULE}.`);
+      return;
+    }
     setBusy(true);
     setError("");
     // Admins see every business, so their scope is the wildcard rather than a
@@ -197,13 +210,16 @@ export function TeamMemberForm({
           <span>{editing ? "New password" : "Password"}</span>
           <input
             autoComplete="new-password"
-            minLength={10}
+            minLength={MIN_PASSWORD_LENGTH}
             onChange={(event) => setPassword(event.target.value)}
             required={!editing}
             type="password"
             value={password}
           />
-          <small className="muted">At least 10 characters.</small>
+          <small className="muted">
+            At least {MIN_PASSWORD_LENGTH} characters. Leading and trailing
+            spaces do not count towards the length.
+          </small>
         </label>
       </FormCard>
 
