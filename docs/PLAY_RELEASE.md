@@ -147,10 +147,27 @@ Neither is ambient or background collection, and the form has a place to say so:
   is kept beyond the eligibility decision, and every other mission works with
   the permission denied. `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION`
   are in the manifest; there is no background location permission.
-- **Photos** are picked from the gallery through the system photo picker, which
-  needs no permission of its own — there is deliberately no `CAMERA` permission
-  and no media-library permission. An uploaded image is held only while the
-  review needs it and is deleted after 90 days (`mission_proof_files`).
+- **Photos** are picked from the gallery through the system photo picker. The
+  app never opens the camera, and `CAMERA` and `RECORD_AUDIO` are turned off at
+  the `expo-image-picker` plugin *and* listed in `blockedPermissions` — the
+  plugin adds both by default because it ships a camera path this app does not
+  use. `READ_EXTERNAL_STORAGE` predates this release. An uploaded image is held
+  only while the review needs it and is deleted after 90 days
+  (`mission_proof_files`).
+
+**Verify this rather than trusting it.** The 1.6.0 build first produced carried
+`CAMERA` and `RECORD_AUDIO` from the picker's defaults, contradicting this very
+paragraph, and the diff below is how that was caught. An `.aab` is a zip and its
+manifest is protobuf, so the permission strings read out directly:
+
+```bash
+unzip -qo app.aab "base/manifest/*" -d out
+grep -a -o 'android.permission.[A-Z_]*' out/base/manifest/AndroidManifest.xml | sort -u
+```
+
+Diff that against the previous release's `.aab` before every submission. The only
+permissions 1.6.0 adds over 1.5.1 are `ACCESS_COARSE_LOCATION` and
+`ACCESS_FINE_LOCATION`.
 
 Location is collected and not shared. Photos are collected and shared, because
 staff at the partner the mission belongs to review what a customer sends. Both

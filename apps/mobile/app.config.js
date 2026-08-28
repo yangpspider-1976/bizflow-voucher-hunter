@@ -85,16 +85,22 @@ module.exports = {
       // Location is here for one feature only: an urgent mission confined to a
       // radius around a partner. It is requested at the moment somebody taps
       // Join on one of those, never at launch, and the app works without it —
-      // every other mission ignores it. There is deliberately no CAMERA
-      // permission: evidence is picked from the gallery, which on modern
-      // Android needs no permission at all.
+      // every other mission ignores it. Evidence is picked from the gallery,
+      // never the camera, so CAMERA and RECORD_AUDIO are blocked below.
       permissions: [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
       ],
+      // Stripped from the merged manifest whatever adds them. SMS is a Play
+      // restricted permission and the OTP is sent server-side; camera and
+      // microphone are unused and come in only as a side effect of the image
+      // picker's defaults, which are also turned off at the plugin. Two locks
+      // on the same door, because the manifest is what ships.
       blockedPermissions: [
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
       ],
     },
     web: {
@@ -119,10 +125,16 @@ module.exports = {
       [
         "expo-image-picker",
         {
-          // Gallery only. A receipt is photographed with the camera app and
-          // picked from the roll, which keeps CAMERA off the manifest.
           photosPermission:
             "Voucher Hunt needs access to your photos so you can send a receipt or photo as mission evidence.",
+          // Gallery only: nothing in the app calls launchCameraAsync. Left at
+          // their defaults the plugin adds CAMERA and RECORD_AUDIO anyway,
+          // because it also ships a camera path we do not use — and a voucher
+          // app asking for a microphone is both untrue and the kind of thing a
+          // Play reviewer stops on. Verified against the built .aab, not
+          // assumed: see the permission diff in docs/PLAY_RELEASE.md.
+          cameraPermission: false,
+          microphonePermission: false,
         },
       ],
       [
