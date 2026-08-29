@@ -310,8 +310,13 @@ export function GoogleLocationPicker({
     window.gm_authFailure = () => {
       if (cancelled) return;
       setMapReady(false);
+      // gm_authFailure carries no reason with it, but Google logs the precise
+      // one to the console (RefererNotAllowedMapError, ApiNotActivatedMapError,
+      // BillingNotEnabledMapError, InvalidKeyMapError). Name all four and this
+      // page's own origin, so the key can be fixed from what is on screen.
+      const origin = window.location.origin;
       setMapError(
-        "Google rejected this browser key. Use a website-restricted key with Maps JavaScript API and Geocoding API enabled.",
+        `Google rejected this browser key for ${origin}. In the Google Cloud project the key belongs to, check that its HTTP referrer list allows ${origin}/*, that Maps JavaScript API and Geocoding API are enabled, and that billing is on. The browser console names which one failed.`,
       );
     };
 
