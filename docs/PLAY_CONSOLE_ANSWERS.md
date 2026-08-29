@@ -6,7 +6,7 @@ code rather than assumed. Paste them in as-is except where marked
 
 App: **Voucher Hunt** · package `com.voucherhunt.mobile` · version `1.0.0`
 (`apps/mobile/app.config.js`) · deployed at
-**https://bizflow-voucher-hunt.vercel.app**
+**https://voucher-hunt.com**
 
 Companion doc: [PLAY_RELEASE.md](PLAY_RELEASE.md) covers builds, signing, and App
 Links. This doc covers only the console questionnaires.
@@ -22,7 +22,7 @@ Links. This doc covers only the console questionnaires.
 
 | Field | Answer |
 |---|---|
-| Privacy policy URL | `https://bizflow-voucher-hunt.vercel.app/privacy` |
+| Privacy policy URL | `https://voucher-hunt.com/privacy` |
 
 The page is at [src/app/privacy/page.tsx](../src/app/privacy/page.tsx) —
 statically rendered and unauthenticated, so a reviewer reaches it without
@@ -192,7 +192,7 @@ Audited from `SCHEMA` in `src/server/db.ts`, the `analytics_events` writes in
 | Does your app collect or share required user data types? | **Yes** |
 | Is all user data encrypted in transit? | **Yes** — HTTPS only; the client refuses plain HTTP outside dev |
 | Account creation methods supported | **Username and other authentication** — only this one |
-| Delete account URL | `https://bizflow-voucher-hunt.vercel.app/delete-account` — **not deployed yet** |
+| Delete account URL | `https://voucher-hunt.com/delete-account` — **not deployed yet** |
 | Deletion of some data without deleting the account? (optional) | **Yes** — notifications can be turned off per category, and the optional email address can be cleared on request |
 
 On account creation: Play counts a phone number as a "username" and a one-time
@@ -372,7 +372,7 @@ does not change this answer. Avoid the words "treatment", "therapy", or
 | Tags | Deals & coupons; Loyalty & rewards; Food & drink |
 | Email address | `yangpspider@gmail.com` — same as `/privacy` and `/delete-account` |
 | Phone | `«FILL IN»` — optional, but expected for a commerce app in PH |
-| Website | `https://bizflow-voucher-hunt.vercel.app` |
+| Website | `https://voucher-hunt.com` |
 
 **Shopping over Lifestyle:** the core loop is discovering and redeeming
 merchant offers, which is what the Shopping category ranks for. Lifestyle is the
