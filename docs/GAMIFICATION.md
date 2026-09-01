@@ -135,8 +135,21 @@ Each of these is one call to `src/server/gamification/hooks.ts`:
 | Voucher chosen and booked | `POST /api/public/hunt/select` | `voucher_select` |
 | Campaign voucher redeemed at the till | `redeemVoucher` in `voucher-engine.ts` | `qr_redeem` |
 | LP voucher spent at a partner | `POST /api/staff/rewards/redeem` | `qr_redeem` |
+| Purchase scanned at a partner's checkout | `POST /api/staff/rewards/credit` | `purchase_verified` |
+| A held purchase scan cleared by review | `POST /api/dashboard/rewards/purchases/review` | `purchase_verified` |
 | Referral visit verified | `POST /api/public/referral/claim` | `referral_verified` |
 | Rewarded ad verified by Google | `GET /api/public/gamification/ads/ssv` | `ad_reward_verified` |
+
+A purchase scan is the one trigger with two call sites, because a fraud-flagged
+scan credits nothing until a person clears it: raising `purchase_verified` at
+the till would pay a mission for a sale the platform has not yet honoured, and
+never raising it after a review would lose the sale entirely. Both key the event
+on the purchase id, so a sale can only ever be counted once.
+
+The dev tools' simulated checkout (`POST /api/public/rewards/dev-purchase`)
+calls the earning path directly rather than through the staff route, so it
+books a real `reward_purchase` and bills the partner but raises no event.
+Drive `purchase_verified` missions through the internal event intake instead.
 
 All are called **after** their own transaction commits, and all use
 `ingestEventQuietly`: a rules-engine fault must never roll back a redemption.
