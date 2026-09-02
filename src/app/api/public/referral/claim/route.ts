@@ -61,12 +61,19 @@ export async function GET(request: NextRequest) {
     // their referrer's notification must not delay or fail that.
     if (outcome.granted && outcome.referrerPhone) {
       // The Connector achievement counts verified referrals, and this is the
-      // only place one is verified. Awaited nowhere: the visitor is mid-redirect.
-      void onReferralVerified({
+      // only place one is verified — so this one is awaited. Left unawaited it
+      // was a local write racing the end of the request: on serverless the
+      // process can be frozen once the response is sent, and a referral reward
+      // that sometimes does not arrive is indistinguishable from a broken
+      // achievement. It is a database round trip and it cannot throw.
+      await onReferralVerified({
         phone: outcome.referrerPhone,
         referralRewardId: outcome.referralRewardId ?? "",
         campaignId: outcome.campaignId,
       });
+      // The push stays fire-and-forget: it is a call out to Expo rather than a
+      // local write, and a missed notification costs nothing that a missed
+      // reward does.
       void notifyReferralConverted({
         phone: outcome.referrerPhone,
         campaignSlug: outcome.campaignSlug ?? parsed.data.campaign,
@@ -113,9 +120,9 @@ export async function POST(request: NextRequest) {
       visitorSessionId,
     });
     if (outcome.granted && outcome.referrerPhone) {
-      // The Connector achievement counts verified referrals, and this is the
-      // only place one is verified. Awaited nowhere: the visitor is mid-redirect.
-      void onReferralVerified({
+      // Awaited for the same reason as the sibling call above: the reward is a
+      // local write and must not race the end of the request.
+      await onReferralVerified({
         phone: outcome.referrerPhone,
         referralRewardId: outcome.referralRewardId ?? "",
         campaignId: outcome.campaignId,
