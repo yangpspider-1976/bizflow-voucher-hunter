@@ -100,6 +100,36 @@ function sum(lines: RewardLine[], type: RewardLine["type"]) {
 }
 
 /**
+ * The reply for a grant this key has already made, read off the existing row.
+ *
+ * Reached from two directions — the check before any work is done, and the race
+ * lost at the insert — and both owe the caller the same answer: what was paid,
+ * by which transaction, and that this call moved nothing.
+ */
+async function alreadyGranted(
+  tx: Exec,
+  walletId: string,
+  row: Record<string, unknown>,
+): Promise<GrantResult> {
+  const standing = await levelSnapshot(tx, walletId);
+  return {
+    rewardTxId: String(row.id),
+    applied: false,
+    held: String(row.status) === "REVIEW_REQUIRED",
+    summary: summarise([
+      { type: "XP", amount: Number(row.xp_amount ?? 0) },
+      { type: "LP", amount: Number(row.lp_centavos ?? 0) },
+      { type: "HUNT_TICKET", amount: Number(row.hunt_tickets ?? 0) },
+      ...(row.badge ? [{ type: "BADGE" as const, amount: 1, badge: String(row.badge) }] : []),
+    ]),
+    lifetimeXp: standing.lifetimeXp,
+    level: standing.level,
+    previousLevel: standing.level,
+    leveledUp: false,
+  };
+}
+
+/**
  * Grants a reward package inside the caller's transaction.
  *
  * The caller owns the transaction on purpose. A mission moving to CLAIMED and
@@ -118,24 +148,7 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
     "SELECT * FROM reward_transactions WHERE idempotency_key = ?",
     [input.idempotencyKey],
   );
-  if (existing) {
-    const standing = await levelSnapshot(tx, input.walletId);
-    return {
-      rewardTxId: String(existing.id),
-      applied: false,
-      held: String(existing.status) === "REVIEW_REQUIRED",
-      summary: summarise([
-        { type: "XP", amount: Number(existing.xp_amount ?? 0) },
-        { type: "LP", amount: Number(existing.lp_centavos ?? 0) },
-        { type: "HUNT_TICKET", amount: Number(existing.hunt_tickets ?? 0) },
-        ...(existing.badge ? [{ type: "BADGE" as const, amount: 1, badge: String(existing.badge) }] : []),
-      ]),
-      lifetimeXp: standing.lifetimeXp,
-      level: standing.level,
-      previousLevel: standing.level,
-      leveledUp: false,
-    };
-  }
+  if (existing) return alreadyGranted(tx, input.walletId, existing);
 
   const funding: FundingSource =
     input.reward.find((line) => line.fundingSource)?.fundingSource ?? "PLATFORM";
@@ -173,10 +186,18 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
       };
 
   const rewardTxId = id("rtx");
-  try {
-    await run(
-      tx,
-      `INSERT INTO reward_transactions
+  // `INSERT OR IGNORE` rather than catching the unique violation afterwards.
+  //
+  // Letting the insert throw and recovering in a catch block worked on SQLite,
+  // where a failed statement leaves the transaction usable. PostgreSQL aborts
+  // the whole transaction on any error, so every statement after it — including
+  // the read that built the "already granted" reply — fails with "current
+  // transaction is aborted", and the loser of the race threw instead of
+  // returning. The conflict clause keeps the transaction clean, and a zero row
+  // count says the same thing the exception did.
+  const inserted = await run(
+    tx,
+      `INSERT OR IGNORE INTO reward_transactions
        (id, wallet_id, source_type, source_id, reward_json, xp_amount, lp_centavos,
         hunt_tickets, badge, funding_source, partner_id, status, hold_reason,
         idempotency_key, config_version, metadata, created_at)
@@ -210,24 +231,26 @@ export async function grantReward(tx: Exec, input: GrantInput): Promise<GrantRes
         }),
         isoNow(),
       ],
+  );
+
+  // The unique index is the authority under concurrency: two workers handling
+  // the same event both reach the insert, and exactly one wins. The loser reads
+  // back what the winner wrote and reports that, rather than an empty result —
+  // the reward exists, and its caller is entitled to know what it was.
+  if (inserted === 0) {
+    const winner = await one(
+      tx,
+      "SELECT * FROM reward_transactions WHERE idempotency_key = ?",
+      [input.idempotencyKey],
     );
-  } catch (error) {
-    // The unique index is the authority under concurrency: two workers handling
-    // the same event both reach the insert, and exactly one wins.
-    if (isUniqueViolation(error)) {
-      const standing = await levelSnapshot(tx, input.walletId);
-      return {
-        rewardTxId: "",
-        applied: false,
-        held: false,
-        summary: EMPTY_REWARD,
-        lifetimeXp: standing.lifetimeXp,
-        level: standing.level,
-        previousLevel: standing.level,
-        leveledUp: false,
-      };
-    }
-    throw error;
+    if (winner) return alreadyGranted(tx, input.walletId, winner);
+    // No row and no insert means the conflict was on something other than the
+    // idempotency key, which is a bug rather than a race.
+    throw new AppError(
+      "E-REWARD-CONFLICT",
+      "The reward could not be recorded",
+      500,
+    );
   }
 
   if (held) {
