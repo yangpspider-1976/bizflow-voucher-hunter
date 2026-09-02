@@ -7,6 +7,10 @@ import Link from "next/link";
  * own otherwise — which would make the sidebar mostly about a feature most days
  * need nothing from. A strip inside the section keeps the top level about the
  * shape of the business.
+ *
+ * Tabs rather than buttons: these switch between screens that already exist
+ * instead of doing anything, so they stay quiet until one of them is the page
+ * you are on.
  */
 const LINKS: { href: string; label: string; partner?: boolean }[] = [
   { href: "/dashboard/gamification", label: "Economy" },
@@ -28,10 +32,10 @@ export function GamificationNav({
 }) {
   const links = partnerOnly ? LINKS.filter((link) => link.partner) : LINKS;
   return (
-    <nav className="admin-form-actions" aria-label="Levels and missions">
+    <nav className="admin-subnav" aria-label="Levels and missions">
       {links.map((link) => (
         <Link
-          className={`button ${link.href === active ? "" : "secondary"}`}
+          aria-current={link.href === active ? "page" : undefined}
           href={link.href}
           key={link.href}
         >

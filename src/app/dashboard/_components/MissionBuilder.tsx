@@ -160,7 +160,7 @@ export function MissionBuilder({
 
   if (!open) {
     return (
-      <div className="admin-form-actions">
+      <div className="admin-form-actions mission-builder-launch">
         <button className="button" onClick={() => setOpen(true)} type="button">
           New mission
         </button>

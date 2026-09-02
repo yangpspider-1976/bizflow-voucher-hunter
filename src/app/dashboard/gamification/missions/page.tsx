@@ -83,9 +83,9 @@ export default async function MissionsPage() {
         <MissionBuilder canApprove={scope.canApprove} partners={partners} />
       </section>
 
-      <section className="panel">
+      <section className="panel table-wrap">
         <h2>Current</h2>
-        <table className="data-table">
+        <table className="admin-table">
           <thead>
             <tr>
               <th>Mission</th>
@@ -115,23 +115,28 @@ export default async function MissionsPage() {
               return (
                 <tr key={`${row.mission_key}:${row.definition_version}`}>
                   <td>
-                    <strong>{String(row.title)}</strong>
-                    <br />
-                    <span className="muted">
+                    <div className="cell-title">{String(row.title)}</div>
+                    <div className="muted">
                       {String(row.mission_key)} · v{String(row.definition_version)}
-                    </span>
-                    {Number(row.requires_proof ?? 0) === 1 ? (
-                      <>
-                        {" "}
-                        <span className="badge neutral">evidence</span>
-                      </>
-                    ) : null}
+                      {Number(row.requires_proof ?? 0) === 1 ? (
+                        <>
+                          {" "}
+                          <span className="badge neutral">evidence</span>
+                        </>
+                      ) : null}
+                    </div>
                   </td>
                   <td>{String(row.type)}</td>
-                  <td>{String(row.partner_name ?? "—")}</td>
+                  <td>
+                    {row.partner_name ? (
+                      String(row.partner_name)
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td>{describeReward(String(row.reward_json ?? "[]"))}</td>
-                  <td>{quota}</td>
-                  <td>{budget}</td>
+                  <td className="cell-numeric">{quota}</td>
+                  <td className="cell-numeric">{budget}</td>
                   <td>
                     <span
                       className={
@@ -158,8 +163,8 @@ export default async function MissionsPage() {
             })}
             {current.length === 0 ? (
               <tr>
-                <td colSpan={8}>
-                  <span className="muted">No missions yet.</span>
+                <td className="table-empty" colSpan={8}>
+                  No missions yet. Write one above.
                 </td>
               </tr>
             ) : null}

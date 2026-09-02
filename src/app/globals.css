@@ -1168,6 +1168,58 @@ img.logo-tile {
     margin-bottom: 0;
 }
 
+/* An action group inside a table cell is the cell's own content, not a row of
+   controls under a form: the trailing margin only made the row taller. */
+.admin-shell td > .admin-form-actions {
+    margin-bottom: 0;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Section tabs.
+ *
+ * A section with screens of its own — gamification has five — needs a strip
+ * that says "these are the pages of this section". Drawn as buttons it said
+ * something else: a button is a thing you press to make something happen, and a
+ * row of them under a page title reads as a toolbar. Tabs are quiet by default
+ * and mark the current page with the brand accent, so the strip locates you
+ * rather than asking to be clicked.
+ * ---------------------------------------------------------------------------
+ */
+.admin-shell .admin-subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+}
+
+.admin-shell .admin-subnav a {
+    /* The tab's own rule sits *on* the strip's hairline, not above it. */
+    margin-bottom: -1px;
+    padding: 10px 12px;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    transition:
+        color 160ms ease,
+        border-color 160ms ease;
+}
+
+.admin-shell .admin-subnav a:hover {
+    border-bottom-color: var(--line);
+    color: var(--navy);
+}
+
+.admin-shell .admin-subnav a[aria-current="page"] {
+    border-bottom-color: var(--purple);
+    color: var(--purple);
+    font-weight: 600;
+}
+
 /*
  * ---------------------------------------------------------------------------
  * Console form controls, matching the reference: 36px tall, 12px of horizontal
@@ -2750,6 +2802,17 @@ a.sidebar-brand:focus-visible {
 
 .admin-form-toggle {
     margin-bottom: 14px;
+}
+
+/*
+ * The mission builder's trigger sits under its panel's explanation, whose
+ * bottom margin is taken away above so a heading band can close tight against a
+ * table. The row gives that gap back, and drops its own trailing margin — the
+ * panel's padding already closes the card.
+ */
+.mission-builder-launch {
+    margin-top: 16px;
+    margin-bottom: 0;
 }
 
 .change-request-table {
