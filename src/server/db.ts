@@ -523,6 +523,10 @@ CREATE TABLE IF NOT EXISTS reward_audit_logs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reward_audit_entity ON reward_audit_logs (entity_type, entity_id, created_at);
+-- Every append looks for the entry nobody points at, which is the chain's tip.
+-- Without this that lookup is a sequential scan of the whole log on every
+-- audited action.
+CREATE INDEX IF NOT EXISTS idx_reward_audit_previous ON reward_audit_logs (previous_hash);
 -- ---- Gamification -------------------------------------------------------
 -- Levels, missions and achievements hang off the reward wallet rather than off
 -- "users": "users" is per-campaign, so one person has as many rows as hunts

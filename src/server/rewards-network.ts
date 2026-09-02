@@ -338,7 +338,25 @@ async function audit(
   },
 ) {
   const createdAt = isoNow();
-  const previous = await one(db, "SELECT event_hash FROM reward_audit_logs WHERE event_hash IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1");
+  // The tip is the entry nobody points at, not the newest-looking row.
+  //
+  // Ordering by `created_at DESC, id DESC` looked equivalent and is not: ids are
+  // random hex, so two entries written in the same millisecond are ordered by a
+  // coin toss rather than by insertion. The loser of that toss was handed out as
+  // the tip, the next entry chained onto an entry that already had a successor,
+  // and the chain forked — which the nightly integrity check then reports as
+  // tampering. Following the links instead is exact at any clock resolution.
+  const previous = await one(
+    db,
+    `SELECT a.event_hash
+       FROM reward_audit_logs a
+      WHERE a.event_hash IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM reward_audit_logs b WHERE b.previous_hash = a.event_hash
+        )
+      ORDER BY a.created_at DESC
+      LIMIT 1`,
+  );
   const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
   const hashPayload = JSON.stringify({
     previousHash: previous?.event_hash ?? null,
