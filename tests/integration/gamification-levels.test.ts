@@ -136,7 +136,9 @@ describe("LP to XP conversion", () => {
     ]);
     // Debited once, not twice.
     expect(Number(balance?.balance_centavos)).toBe(500_00);
-    expect((await levelStateFor(db, wallet.id)).lifetimeXp).toBe(500);
+    // 500 XP for the conversion, plus the Level Investor badges it earns on the
+    // way past: Bronze at 100 LP converted (25 XP) and Silver at 500 (75).
+    expect((await levelStateFor(db, wallet.id)).lifetimeXp).toBe(600);
   });
 
   it("does not double-debit when the same tap arrives twice at once", async () => {
@@ -165,7 +167,13 @@ describe("LP to XP conversion", () => {
     const succeeded = results.filter((result) => result.status === "fulfilled").length;
     // Whatever the interleaving, LP out and XP in have to agree.
     expect(balance).toBe(1_000_00 - succeeded * 500_00);
-    expect((await levelStateFor(db, wallet.id)).lifetimeXp).toBe(succeeded * 500);
+    // Plus the Level Investor tiers the conversions cross. Either one or two
+    // succeeding passes 100 and 500 LP converted, so both badges land as soon
+    // as anything does — 25 XP and 75.
+    const badgeXp = succeeded > 0 ? 100 : 0;
+    expect((await levelStateFor(db, wallet.id)).lifetimeXp).toBe(
+      succeeded * 500 + badgeXp,
+    );
   });
 
   it("records the partner a conversion drew from, for the settlement line", async () => {

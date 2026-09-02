@@ -8,6 +8,7 @@ import {
 import { all, getDb, one, resetDb, run } from "@/server/db";
 import { runReconciliation, verifyAuditChain } from "@/server/reconciliation";
 import { getOrCreateRewardWallet } from "@/server/rewards-network";
+import { sendVoucherConfirmationSms } from "@/server/voucher-engine";
 import { huntAndSelect } from "../helpers";
 
 /**
@@ -28,6 +29,11 @@ describe("account deletion", () => {
   /** A customer with a voucher, a booking, a wallet and a device registered. */
   async function makeCustomer(number: string) {
     const voucher = await huntAndSelect({ campaignSlug, phone: number, name: "Deleting User" });
+    // The confirmation is sent by the select route rather than by
+    // selectFinalVoucher, so issuing a voucher through the engine alone leaves
+    // no delivery log — and a customer with no sms_logs row cannot show that
+    // deletion de-identifies one.
+    await sendVoucherConfirmationSms(voucher.voucher.id);
     const wallet = await getOrCreateRewardWallet({ phone: number, name: "Deleting User" });
     const db = await getDb();
     await run(

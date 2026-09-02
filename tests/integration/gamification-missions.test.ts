@@ -49,7 +49,10 @@ describe("daily missions", () => {
     expect(hunt?.reward.xp).toBe(10);
 
     const profile = await gamificationProfile({ phone });
-    expect(profile.level.lifetimeXp).toBe(10);
+    // 10 for the mission and 25 for Hunt Master Bronze, which one hunt unlocks.
+    // A badge pays XP too, so a mission reward is never the whole of what one
+    // event moves.
+    expect(profile.level.lifetimeXp).toBe(35);
     expect(
       profile.missions.find((mission) => mission.missionKey === "daily_hunt")?.state,
     ).toBe("CLAIMED");
@@ -73,7 +76,8 @@ describe("daily missions", () => {
 
     expect(first.accepted).toBe(true);
     expect(second.accepted).toBe(false);
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(10);
+    // The mission and the badge it unlocked, counted once between them.
+    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(35);
   });
 
   it("credits an ad only to the window it was watched in", async () => {
@@ -202,7 +206,7 @@ describe("daily missions", () => {
       objectId: "att_day1",
       idempotencyKey: "hunt_complete:att_day1",
     });
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(10);
+    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(35);
 
     // One second past 00:00 Manila the next day.
     vi.setSystemTime(new Date("2026-07-03T16:00:01.000Z"));
@@ -213,7 +217,7 @@ describe("daily missions", () => {
       tomorrow.missions.find((mission) => mission.missionKey === "daily_hunt")?.state,
     ).toBe("AVAILABLE");
     // XP is cumulative and survives the reset; the mission instance does not.
-    expect(tomorrow.level.lifetimeXp).toBe(10);
+    expect(tomorrow.level.lifetimeXp).toBe(35);
 
     await ingestEvent({
       eventName: "hunt_complete",
@@ -222,7 +226,9 @@ describe("daily missions", () => {
       objectId: "att_day2",
       idempotencyKey: "hunt_complete:att_day2",
     });
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(20);
+    // A second hunt pays the new day mission; Hunt Master Silver is ten hunts
+    // away, so no badge lands with it.
+    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(45);
   });
 
   it("expires yesterday's unfinished missions but keeps a finished one claimable", async () => {

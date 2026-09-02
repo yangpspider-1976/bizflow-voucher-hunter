@@ -329,7 +329,12 @@ describe("LP lifecycle end to end", () => {
       "SELECT balance_centavos FROM reward_wallets WHERE phone = ?",
       [phone],
     );
-    expect(Number(global?.balance_centavos)).toBe(0);
+    // None of the 5% reached the global pot. What is in there is the 5 LP the
+    // "visit a partner and scan" daily mission pays for the same scan — a
+    // platform-funded reward, which is why it lands in the spend-anywhere pot
+    // rather than in the partner's bucket, and why the partner is billed for
+    // ₱100.00 above and not a centavo more.
+    expect(Number(global?.balance_centavos)).toBe(5_00);
   });
 
   // A voucher already served cannot be refused because the money side failed.

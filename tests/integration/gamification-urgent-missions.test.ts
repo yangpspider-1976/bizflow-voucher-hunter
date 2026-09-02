@@ -59,6 +59,25 @@ async function walletId(forPhone = phone) {
   return (await ensureRewardWallet(await getDb(), { phone: forPhone })).id;
 }
 
+/**
+ * XP actually paid out for one mission, rather than the player's total.
+ *
+ * The event that finishes an urgent campaign generally finishes a daily mission
+ * and unlocks a badge tier as well, so lifetime XP moves whether or not the
+ * campaign itself paid anything. Only the mission's own reward transaction
+ * answers the question the evidence tests are asking, which is whether a
+ * mission waiting on a human has paid before one looked.
+ */
+async function missionXpPaid(missionKey: string) {
+  const rows = await all(
+    await getDb(),
+    `SELECT xp_amount FROM reward_transactions
+     WHERE source_type = 'mission' AND source_id LIKE ? AND status = 'GRANTED'`,
+    [`${missionKey}:%`],
+  );
+  return rows.reduce((total, row) => total + Number(row.xp_amount), 0);
+}
+
 async function board(forPhone = phone) {
   const wallet = await resolveWallet(forPhone);
   const db = await getDb();
@@ -238,7 +257,7 @@ describe("evidence review", () => {
     const card = cards.find((entry) => entry.missionKey === "urgent_offpeak");
     expect(card?.state).toBe("VERIFYING");
     // Nothing paid, because nobody has looked yet.
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(0);
+    expect(await missionXpPaid("urgent_offpeak")).toBe(0);
   });
 
   it("pays on approval and keeps the picture out of the decision row", async () => {
@@ -275,7 +294,7 @@ describe("evidence review", () => {
       reviewer: "ops@test",
     });
     expect(decision.paid).toBe(true);
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(50);
+    expect(await missionXpPaid("urgent_offpeak")).toBe(50);
   });
 
   it("leaves a rejected mission open with the reason on it", async () => {
@@ -305,7 +324,7 @@ describe("evidence review", () => {
     expect(card?.state).toBe("VERIFYING");
     expect(card?.proof?.status).toBe("Rejected");
     expect(card?.proof?.rejectReason).toContain("different branch");
-    expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(0);
+    expect(await missionXpPaid("urgent_offpeak")).toBe(0);
 
     // And a second attempt supersedes the first rather than replacing history.
     const again = await submitMissionProof({
@@ -389,7 +408,10 @@ describe("pre-flight simulation", () => {
 
   it("warns when the worst case is bigger than the budget", async () => {
     const db = await getDb();
+    // Two, because the audience is the other half of the bound: one wallet at
+    // 100 LP exactly meets a 100 LP budget, and the warning is for exceeding it.
     await ensureRewardWallet(db, { phone });
+    await ensureRewardWallet(db, { phone: other });
 
     const simulation = await simulateMission(db, {
       audience: { segment: "all" },
@@ -490,13 +512,21 @@ describe("held rewards", () => {
     // Nothing paid: the mission is CLAIMED but the XP is still owed.
     expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(0);
 
+    // Two rows, because one hunt earns two things — the daily mission and Hunt
+    // Master Bronze — and a hold parks every reward the wallet earns, not just
+    // the one that happened to trip it.
     const queue = await listHeldRewards(db);
-    expect(queue).toHaveLength(1);
-    expect(String(queue[0]!.hold_reason)).toMatch(/held/i);
+    expect(queue).toHaveLength(2);
+    expect(queue.map((row) => String(row.source_type)).sort()).toEqual([
+      "achievement",
+      "mission",
+    ]);
+    expect(queue.every((row) => String(row.hold_reason).match(/held/i))).toBe(true);
 
+    const missionRow = queue.find((row) => String(row.source_type) === "mission");
     const released = await withTx((tx) =>
       settleHeldReward(tx, {
-        rewardTxId: String(queue[0]!.id),
+        rewardTxId: String(missionRow!.id),
         actor: "ops@test",
         decision: "Approve",
         reason: "Family share one phone",
@@ -505,7 +535,11 @@ describe("held rewards", () => {
     );
     expect(released.paid.xp).toBe(10);
     expect((await gamificationProfile({ phone })).level.lifetimeXp).toBe(10);
-    expect(await listHeldRewards(db)).toHaveLength(0);
+    // Approving one reward releases that reward and no other: the badge is a
+    // separate decision and is still waiting for one.
+    const remaining = await listHeldRewards(db);
+    expect(remaining).toHaveLength(1);
+    expect(String(remaining[0]!.source_type)).toBe("achievement");
   });
 
   it("pays nothing when a held reward is refused, and refuses a second decision", async () => {

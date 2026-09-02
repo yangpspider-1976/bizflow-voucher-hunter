@@ -195,6 +195,12 @@ describe("achievement backfill", () => {
 
   it("is safe to run twice", async () => {
     await huntAndSelect({ campaignSlug: "july-dinner", phone });
+    // The backfill walks reward_wallets, and playing a hunt does not open one.
+    // Without this the first pass has nothing to process and reading the card
+    // afterwards creates the wallet, so the second pass does the work the first
+    // did not — which looks like the run being unrepeatable rather than the
+    // wallet arriving late.
+    await ensureRewardWallet(await getDb(), { phone });
 
     const first = await startBackfill({ actor: "ops@test" });
     await runBackfillToCompletion({ jobId: first.id, budgetMs: 5_000 });
