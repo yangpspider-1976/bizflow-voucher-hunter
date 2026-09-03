@@ -46,6 +46,17 @@ export type Campaign = {
   shopUrl?: string;
   /** When true, an issued restaurant reservation can be moved to another slot. */
   allowReschedule: boolean;
+  /**
+   * The level restrictions a partner may put on this campaign, from §3.4's
+   * Partner CMS row. Defaults are the unrestricted behaviour that predates
+   * levels, so an untouched campaign is open to everybody.
+   */
+  minUserLevel: number;
+  levelExclusive: boolean;
+  levelQuota: number;
+  levelOfferLabel?: string;
+  /** ISO instant the offer opens to everybody; undefined means it is open now. */
+  earlyAccessAt?: string;
 };
 
 export type CampaignSlot = {
@@ -95,6 +106,12 @@ export type CampaignCard = {
    * rather than vanishing on the customer who was hunting it.
    */
   ended: boolean;
+  /**
+   * Where the viewer stands against this campaign's level rules. Present only
+   * on lists built for a known viewer; a card fetched anonymously carries the
+   * gate computed for the floor of the ladder.
+   */
+  levelGate?: import("./gamification").OfferGate;
 };
 
 /**

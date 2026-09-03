@@ -15,6 +15,7 @@ import type {
   MissionClaimResult,
   MissionProofResult,
   MissionState,
+  OfferGate,
   PointConversionResult,
   RewardLedgerEntry,
   RewardVoucher,
@@ -232,6 +233,8 @@ export type PublicCampaign = {
   business?: Business;
   slots: PublicSlot[];
   availability: CampaignAvailability;
+  /** Where the viewer stands against the campaign's level rules. */
+  levelGate?: OfferGate;
 };
 
 export type HuntState = {

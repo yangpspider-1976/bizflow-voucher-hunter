@@ -205,7 +205,9 @@ describe("Phase 1 mobile API", () => {
   });
 
   it("lists active campaigns for the mobile directory", async () => {
-    const response = await listCampaigns();
+    // Signed out: the directory is public, and every card comes back with the
+    // level gate computed for the floor of the ladder.
+    const response = await listCampaigns(new Request("http://localhost/api/public/campaigns"));
     const body = await responseBody<
       Array<{
         campaign: { slug: string };

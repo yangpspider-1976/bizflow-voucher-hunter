@@ -34,6 +34,7 @@ import {
   campaignInstruction,
   formatCampaignRange,
   localeFor,
+  offerLockLabel,
 } from "@/lib/format";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { colors, fonts, radius, shadow, spacing } from "@/theme";
@@ -273,7 +274,7 @@ export default function CampaignLandingScreen() {
     );
   }
 
-  const { availability, business, campaign: details } = campaign;
+  const { availability, business, campaign: details, levelGate } = campaign;
   // The business writes this pitch in the dashboard, so it arrives in one
   // language only. It leads, and the translated instruction stays underneath
   // rather than being replaced by it.
@@ -281,7 +282,11 @@ export default function CampaignLandingScreen() {
   // A customer who already holds a voucher (or a live attempt) still needs the
   // button: their next step is booking or confirming, not drawing. Only a fresh
   // hunt is blocked, and only when the draw would refuse it anyway.
-  const huntBlocked = !canResume && !availability.bookable;
+  // A level gate blocks a fresh hunt the same way empty inventory does, and
+  // takes precedence in the copy: "you need level 3" is actionable, "fully
+  // booked" is not, and the server refuses on the level first either way.
+  const locked = Boolean(levelGate?.locked);
+  const huntBlocked = !canResume && (locked || !availability.bookable);
   const businessPin =
     business &&
     isCoordinate(business.latitude) &&
@@ -373,7 +378,9 @@ export default function CampaignLandingScreen() {
                 <Icon name="info" size={16} />
               </View>
               <Text style={styles.noticeText}>
-                {availabilityNotice(t, availability)}
+                {locked
+                  ? offerLockLabel(t, levelGate, localeFor(language))
+                  : availabilityNotice(t, availability)}
               </Text>
             </View>
           ) : null}
@@ -402,7 +409,9 @@ export default function CampaignLandingScreen() {
               onPress={startHunt}
             >
               {huntBlocked
-                ? availabilityLabel(t, availability)
+                ? locked
+                  ? offerLockLabel(t, levelGate, localeFor(language))
+                  : availabilityLabel(t, availability)
                 : canResume
                   ? t("campaign.continue")
                   : t("campaign.startHunt")}

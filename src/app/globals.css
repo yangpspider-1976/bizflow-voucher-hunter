@@ -6782,3 +6782,20 @@ th {
         grid-column: span 1;
     }
 }
+
+/* A switch, a number and its unit on one line — the feature-flag rows on the
+   gamification economy screen, where "on" and "for how many" are one decision
+   and reading them as two stacked fields loses that. */
+.field-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.field-row input[type="number"] {
+    width: 5.5rem;
+    flex: 0 0 auto;
+}
+.field-row .muted {
+    font-size: 0.78rem;
+}

@@ -5,6 +5,8 @@ import { fail, ok } from "@/server/errors";
 import {
   MAX_BASE_ATTEMPTS,
   MAX_CANDIDATE_TIMEOUT_MINUTES,
+  MAX_LEVEL,
+  MAX_LEVEL_QUOTA,
   MAX_REFERRAL_DAILY_LIMIT,
 } from "@/lib/limits";
 import { isCampaignImageStorageValue } from "@/lib/campaign-image";
@@ -30,7 +32,15 @@ const patchSchema = z
     candidateTimeoutMinutes: z.number().int().min(1).max(MAX_CANDIDATE_TIMEOUT_MINUTES),
     terms: z.string().min(1),
     shopUrl: z.string().url(),
-    allowReschedule: z.boolean()
+    allowReschedule: z.boolean(),
+    // §3.4's level rules. Bounded here rather than trusted: a minimum level
+    // above the ladder would lock a campaign for everybody with no way to
+    // notice, and a level quota is free hunts.
+    minUserLevel: z.number().int().min(1).max(MAX_LEVEL),
+    levelExclusive: z.boolean(),
+    levelQuota: z.number().int().min(0).max(MAX_LEVEL_QUOTA),
+    levelOfferLabel: z.string().max(60),
+    earlyAccessAt: z.string().datetime()
   })
   .partial();
 

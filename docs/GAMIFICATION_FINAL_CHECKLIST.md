@@ -4,7 +4,8 @@ Answers to the ten questions in §17 of *Voucher Hunt Gamification Update*
 (v1.0, 2026-08-27), each one checked against the code rather than against the
 implementation notes in [GAMIFICATION.md](GAMIFICATION.md).
 
-Verified 2026-09-03 on `main` at `8102bb5`.
+Verified 2026-09-03. First pass at `8102bb5` found three questions unanswered;
+the work that closed them is described under each.
 
 | | Question | Verdict |
 | :---: | --- | --- |
@@ -13,15 +14,16 @@ Verified 2026-09-03 on `main` at `8102bb5`.
 | 3 | Economy values in versioned administrator configuration | Pass |
 | 4 | Evaluations driven only by server events | Pass |
 | 5 | Manila reset, windows and delayed events | Pass |
-| 6 | Server validates minimum level, exclusive offers, quota, budget | **Partial** — offer-level gating missing |
-| 7 | SSV, one-time QR, multi-account, duplicate, concurrency | Pass — SSV has no producer in the app yet |
+| 6 | Server validates minimum level, exclusive offers, quota, budget | Pass |
+| 7 | SSV, one-time QR, multi-account, duplicate, concurrency | Pass — the ad client is a deployment dependency |
 | 8 | Settlement separates mission rewards from LP→XP conversions | Pass |
-| 9 | Existing hunt→voucher→booking→QR→5% regression | **Unproven here** — needs a Postgres run |
-| 10 | Everything stoppable and gradually rollable behind flags | **Gap** — per-mission only |
+| 9 | Existing hunt→voucher→booking→QR→5% regression | **Needs a CI run** |
+| 10 | Everything stoppable and gradually rollable behind flags | Pass |
 
-Two of the ten are not sign-off ready: the level gate does not reach partner
-offers (§6) and there is no feature-flag layer above the individual mission
-(§10). §9 is a matter of running the suite somewhere it can run. The rest hold.
+Nine of the ten are answered in code. §9 is the exception and cannot be answered
+from this machine: the regression suite needs a PostgreSQL instance, there is
+none here, and no amount of reading the tests substitutes for running them.
+**Run `npm run test:integration` in CI before sign-off.**
 
 ---
 
@@ -52,12 +54,11 @@ extinguished LP liability can be traced from the partner side.
 
 *Atomic.* `convertPointsToXp` opens one `withTx` and does wallet lock → LP debit
 → XP credit → level recalculation inside it
-([levels.ts:70](../src/server/gamification/levels.ts#L70)). `claimMission`
-([missions.ts:864](../src/server/gamification/missions.ts#L864)) and `payMission`
-([missions.ts:698](../src/server/gamification/missions.ts#L698)) do the same for
-a state change and the reward it pays. `grantReward` takes the caller's open
-transaction rather than opening its own, so nothing can commit a state change
-without the grant beside it.
+([levels.ts](../src/server/gamification/levels.ts)). `claimMission` and
+`payMission` do the same for a state change and the reward it pays
+([missions.ts](../src/server/gamification/missions.ts)). `grantReward` takes the
+caller's open transaction rather than opening its own, so nothing can commit a
+state change without the grant beside it.
 
 *Idempotent.* Enforced by unique constraints, not by care:
 `user_xp_ledger` ([db.ts:600](../src/server/db.ts#L600)),
@@ -66,9 +67,9 @@ without the grant beside it.
 `hunt_ticket_ledger` ([db.ts:796](../src/server/db.ts#L796)) and
 `gamification_events` ([db.ts:818](../src/server/db.ts#L818)) all carry
 `idempotency_key TEXT NOT NULL UNIQUE`. A replayed conversion returns the
-original result rather than an error
-([levels.ts:76](../src/server/gamification/levels.ts#L76)), which is what §3.3
-asks for on a duplicate tap.
+original result rather than an error, which is what §3.3 asks for on a duplicate
+tap — and it still does so after the terms change, because that retry describes
+a conversion that already happened under the old ones.
 
 ## 3. Are all economy values and exposure conditions managed through administrator configuration and versions?
 
@@ -79,17 +80,18 @@ asks for on a duplicate tap.
 `src/server/gamification/config.ts` seeds the §16 defaults as data and reads
 them back, and every reward transaction records the `config_version` it ran
 under. A live mission is never edited — publishing writes a new
-`definition_version` and archives the previous one
-([mission-admin.ts](../src/server/gamification/mission-admin.ts)) — so
-in-flight instances keep the rules they started under, as §7.3 requires.
-Risk thresholds are in the same versioned config rather than in code, so raising
-one after a real campaign trips a detector is an operator action.
+`definition_version` and archives the previous one — so in-flight instances keep
+the rules they started under, as §7.3 requires. Risk thresholds and the feature
+switches added for §10 are in the same versioned config rather than in code.
 
-*One item outstanding.* §9.1 lists `CONFIG_VERSION_CHANGED`, and no code path
-raises it. Nothing is wrong today — no client endpoint accepts a `configVersion`
-from the caller, so there is no stale version to reject — but the code is
-documented as supported and is not. Either implement the optimistic check on
-`POST /levels/convert-points` or drop the code from the error list.
+*Closed since the first pass.* §9.1's `CONFIG_VERSION_CHANGED` was documented
+and raised nowhere. `GET /levels` now returns the `economyVersion` its terms
+were quoted under, `POST /levels/convert-points` accepts it back as
+`expectedConfigVersion`, and a conversion against terms that have since moved is
+refused with `E-CONFIG-VERSION-CHANGED` (409) rather than silently repriced. The
+field is optional, so an older client behaves exactly as before, and the replay
+path is checked *first* — a retry of a conversion that already succeeded returns
+its original result whatever the live version says.
 
 ## 4. Are level, mission, and achievement evaluations based only on server events?
 
@@ -118,56 +120,56 @@ created on first read or first action.
 
 ## 6. Does the server validate partner minimum level, exclusive offers, quota, and budget?
 
-**Partial — the mission half is complete, the offer half does not exist.**
+**Pass.** The mission half already held; the offer half did not exist and now
+does.
 
-What holds:
+**Missions** — unchanged and already correct: `mission_definitions.min_level`
+([db.ts:640](../src/server/db.ts#L640)); both quota modes as a conditional
+`UPDATE`, never a read-then-write (`joined_count < global_quota` on join,
+`completed_count < global_quota` on payout); a partner-funded mission past its
+budget refused as `REJECTED / BUDGET_EXHAUSTED`; the daily LP cap trimming a
+payout and paying the shortfall in XP; a single grant over the review threshold
+written `REVIEW_REQUIRED`; and `WHERE balance_centavos >= ?` on every debit.
 
-- **Minimum level on missions.** `mission_definitions.min_level`
-  ([db.ts:640](../src/server/db.ts#L640)), checked server-side, with the
-  ineligible card carrying `LEVEL_REQUIRED` and the XP still to go.
-- **Quota.** Both modes are a conditional `UPDATE`, never a read-then-write:
-  `joined_count < global_quota` on join
-  ([missions.ts:1011](../src/server/gamification/missions.ts#L1011)) and
-  `completed_count < global_quota` on payout
-  ([missions.ts:719](../src/server/gamification/missions.ts#L719)).
-- **Budget.** A partner-funded mission past its campaign budget is refused and
-  marked `REJECTED / BUDGET_EXHAUSTED`
-  ([missions.ts:749](../src/server/gamification/missions.ts#L749)); the daily LP
-  cap trims a payout and pays the shortfall in XP
-  ([rewards.ts:357](../src/server/gamification/rewards.ts#L357)); a single grant
-  over the review threshold is written `REVIEW_REQUIRED`
-  ([rewards.ts:172](../src/server/gamification/rewards.ts#L172)); every debit
-  carries `WHERE balance_centavos >= ?`.
+**Offers** — new. §3.4's Partner CMS row now exists on `campaigns` as
+`min_user_level`, `level_exclusive`, `level_quota`, `level_offer_label` and
+`early_access_at`, every default being the unrestricted behaviour that predates
+levels, so no campaign already written changed.
 
-What is missing: **§3.4's Partner CMS row is not implemented on offers.** The
-`campaigns` table has no `min_user_level`, `level_exclusive`, `level_quota` or
-`level_offer_label` column, and nothing in the hunt or voucher path consults a
-player's level except the bonus-hunt allowance
-([voucher-engine.ts:249](../src/server/voucher-engine.ts#L249)).
-`level_definitions.early_access_minutes` is stored, seeded at 10/30 minutes and
-editable in the Admin CMS ([db.ts:566](../src/server/db.ts#L566)) but is read by
-nothing — it is a number on a screen. So today:
+| Rule | What the server does |
+| --- | --- |
+| `min_user_level` | Refuses with `E-LEVEL-REQUIRED` (403) at **both** `startHunt` and `generateCandidate` — the door and the draw, because the draw is what spends an attempt, a tier's stock and a slot's capacity |
+| `level_exclusive` | Drops the campaign from the viewer's directory instead of showing it locked; off by default, because §3.2 wants a restriction to read as a goal |
+| `early_access_at` | Refuses with `E-OFFER-NOT-OPEN` (409) until the offer opens, less the head start the viewer's level carries — this is the first "opens at" the product has had, and without it `early_access_minutes` had no start to be ahead of |
+| `level_quota` | Added to the player's own daily allowance, through the existing `level_bonus` attempt source, so the three hunt sources stay separately counted as §1.2 asks |
 
-- a partner cannot restrict a campaign to Lv.3+, which is the §3.2 benefit for
-  levels 3 through 5;
-- early access is advertised to players in the level ladder and not honoured;
-- the §3.4 "Locked Offer" screen — lock icon, required level, missing XP — has
-  no data to render, because no offer is ever locked.
+The decision is one pure function, `evaluateOfferGate` in `@bizflow/shared`, so
+the card the app draws and the refusal the server issues cannot drift apart. A
+locked card carries the required level and the XP still to earn, in the app's
+four languages, and stays tappable through to the campaign page — §3.2's "do not
+hide level access restrictions", answered with a goal rather than a dead end.
 
-This does not affect any ledger, and levels remain correct. It is a scope hole
-in the *benefits* of levelling, and it is the one thing on this list a player
-would notice: the ladder promises access it does not currently grant. Closing it
-is a column on `campaigns`, a check in the campaign read path and the eligibility
-already written for missions, plus the locked-card state in the app.
+Two ordering rules are load-bearing and easy to get backwards: the level is
+answered before the clock (a player three levels short does not need the opening
+time), and a head start is only granted to somebody the level gate already
+admits (early access to an offer you cannot hunt is not a benefit).
+
+Cost was watched: an unrestricted campaign returns from the gate before touching
+the database, and the public directory skips the ladder and level reads entirely
+unless some campaign in the list actually has rules.
+
+Covered by [gamification-offers.test.ts](../tests/unit/gamification-offers.test.ts)
+(17 tests, run locally) and the server half of
+[gamification-offer-gates.test.ts](../tests/integration/gamification-offer-gates.test.ts),
+which needs Postgres.
 
 ## 7. Are AdMob SSV, one-time QR use, and protections against multiple accounts, duplicates, and concurrency implemented?
 
 **Pass on the server. One deployment dependency.**
 
 - **SSV.** ECDSA verification against Google's published keys over the callback's
-  own query string, a signed short-lived nonce minted by
-  `POST /ads/nonce`, and a unique `ad_transaction_id` as the replay guard
-  ([ad-verification.ts](../src/server/gamification/ad-verification.ts),
+  own query string, a signed short-lived nonce, and a unique `ad_transaction_id`
+  as the replay guard ([ad-verification.ts](../src/server/gamification/ad-verification.ts),
   [db.ts:836](../src/server/db.ts#L836)). No client callback and no playback
   start is ever treated as a completion.
 - **One-time QR.** Redemption is a conditional update —
@@ -177,15 +179,17 @@ already written for missions, plus the locked-card state in the app.
 - **Multiple accounts.** Phone OTP identity, plus the `shared_device` detector
   over `device_id_hash` and a graduated hold that writes rewards
   `REVIEW_REQUIRED` rather than dropping them
-  ([anomaly.ts:240](../src/server/gamification/anomaly.ts#L240)).
+  ([anomaly.ts](../src/server/gamification/anomaly.ts)).
 - **Duplicates and concurrency.** The unique keys in §2 above, `FOR UPDATE` on
   the XP row, and conditional updates everywhere a counter moves.
 
-*Dependency.* Nothing in the Expo app requests a rewarded ad yet — no ad SDK is
-installed and the AdMob app/unit ids do not exist. The three ad missions are
-configured and pay correctly, but nothing can trigger them in production until
-`react-native-google-mobile-ads` is added, `customData` from the nonce endpoint
-is passed into the ad request and the SSV callback URL is set in AdMob.
+*Dependency, unchanged and outside this codebase.* Nothing in the Expo app
+requests a rewarded ad yet — no ad SDK is installed and the AdMob app/unit ids do
+not exist. The three ad missions are configured and pay correctly, but nothing
+can trigger them in production until `react-native-google-mobile-ads` is added,
+`customData` from the nonce endpoint is passed into the ad request, and the SSV
+callback URL is set in the AdMob console. That needs an AdMob account, not a
+code change.
 
 ## 8. Does the settlement report separate mission rewards from LP→XP conversions?
 
@@ -202,7 +206,7 @@ net is a finance decision, and this report is what it would be made from.
 
 ## 9. Has the existing hunt→voucher→booking→QR→5% accrual flow passed regression testing?
 
-**Not provable on this machine. Must be run before sign-off.**
+**Not provable on this machine. The one box that stays open.**
 
 The coverage exists: `tests/integration/voucher-flow.test.ts`,
 `voucher-hardening.test.ts`, `hunt-resume.test.ts`,
@@ -211,70 +215,94 @@ its idempotency, both the global pot and the partner bucket),
 `lp-lifecycle.test.ts` (the ₱500 redemption unit and the monthly settlement),
 `referral-flow.test.ts`, `transactions.test.ts` and `concurrency.test.ts`.
 
-What ran here on 2026-09-03:
+What ran here after the changes above:
 
 ```
-npm run typecheck                    clean
-npx vitest run tests/unit            23 files / 220 tests passed
-npx vitest run tests/unit/gamification-*   54 passed
+npm run typecheck            clean
+npm run mobile:typecheck     clean
+npx vitest run tests/unit    25 files / 248 tests passed
 ```
 
 The four failing unit files fail for one reason — *"Tests need TEST_DATABASE_URL
 set to a PostgreSQL connection string of their own"* — and there is no local
-Postgres. The whole integration suite is in the same position. **Run
-`npm run test:integration` against a throwaway Postgres in CI or staging and
-attach the output before this box is ticked.** Until then §9 is untested rather
-than passing.
+Postgres. The whole integration suite is in the same position, including the new
+`gamification-offer-gates.test.ts`, which has therefore never been executed.
+
+This matters more than it did before this round of work, because §6 put a new
+check inside `startHunt` and `generateCandidate` — the hunt flow, which is the
+part of this system that has been got wrong by reasoning alone before. The check
+is designed to be inert on an unconfigured campaign and every seeded campaign is
+unconfigured, so the regression suite should be unaffected; **that is a
+prediction, and the suite is what turns it into a fact.** Run it.
 
 ## 10. Can each feature be stopped immediately and rolled out gradually through feature flags?
 
-**Gap. Stopping works at the mission level only, and there is no gradual rollout.**
+**Pass.**
 
-What exists:
+Five switches now live in the versioned economy configuration —
+`levels`, `conversion`, `missions`, `achievements`, `notifications` — each with
+an `enabled` flag and a `rolloutPercent`, published from
+`/dashboard/gamification` like every other economy value, with no deploy and
+with the version history as the audit trail
+([flags.ts](../src/server/gamification/flags.ts),
+[config.ts](../src/server/gamification/config.ts)).
 
-- A mission definition can be moved to `Stopped` immediately, without a deploy
-  ([mission-admin.ts:512](../src/server/gamification/mission-admin.ts#L512)),
-  and §10.1's choice about in-flight participants is recorded.
-- Economy and level configuration are republished as new versions, so a value
-  can be corrected in seconds.
-- Mission audience segments target who sees one campaign.
+`conversion` is split from `levels` deliberately: it is the one that moves a
+partner's liability, and it is the most likely thing to need stopping while
+everything else keeps running.
 
-What does not exist:
+Membership in a partial rollout is a stable hash of the wallet id against the
+percentage, so **raising the number only ever adds players**. A cohort that
+reshuffled between reads would take the feature away from somebody who had it
+yesterday, which is worse than not rolling out at all; the property is asserted
+across a ramp of 0 → 5 → 10 → 25 → 50 → 75 → 100 in
+[gamification-flags.test.ts](../tests/unit/gamification-flags.test.ts). The
+feature name is mixed into the hash so two features at 10% do not pick the same
+tenth of the userbase and make one unlucky cohort look like a bad build.
+Notifications are a switch rather than a ramp — 0 or 100, refused otherwise —
+because a fan-out picks its audience by query and a half-sent announcement is a
+silent, unexplainable gap in who heard about a campaign.
 
-- No switch turns off the level system, LP→XP conversion, achievements, the
-  anomaly sweep or gamification push as a whole. If conversion had to be halted
-  tonight, the only levers are a code deploy or publishing an economy version
-  with a hostile minimum — which is a workaround, not a control.
-- No percentage or cohort rollout anywhere. A published mission is live for its
-  whole audience at once. There is no way to give levels to 5% of wallets first,
-  which is what §15's "safe phased rollout" describes.
+Two rules are enforced rather than documented:
 
-Cheapest honest fix, and it needs no new infrastructure: the economy config is
-already versioned, admin-publishable and read on every path, so add a `features`
-block to it — `{ levels, conversion, missions, achievements, notifications }` —
-plus a `rolloutPercent` keyed on a stable hash of the wallet id, and check both
-in `profile.ts` and at the top of each hook in `hooks.ts`. That gives an instant
-stop and a graduated ramp through the screen operations already use, with the
-version history as the audit trail.
+- **A flag gates earning and exposure, never a payout already earned.** A
+  mission finished this morning still pays when it is claimed this afternoon.
+- **Nothing is lost while a switch is off.** An event arriving with the rules
+  engine off is written `Deferred` instead of judged, and publishing an economy
+  version — the only thing that can turn a feature back on — requeues it.
+  Deferred rows are deliberately excluded from the ordinary retry sweep, which
+  reads in creation order and would otherwise starve the events that can
+  actually be processed.
 
-Two rules matter in the implementation: a flag must gate *earning and exposure*,
-never a payout that was already earned — a disabled feature must not swallow a
-grant a player is owed — and a wallet inside the rollout must stay inside it
-when the percentage moves, which is what hashing the wallet id rather than
-sampling gives you.
+The one case that is not deferred is a half-off configuration — missions off,
+achievements on. That half is skipped for events arriving while it is off and
+the row is finished, because replaying later would double-count the half that
+already ran. A counter counted twice is a worse outcome than a mission that did
+not notice a redemption during an outage the operator declared.
+
+Per-mission stopping is unchanged and still there: a definition moves to
+`Stopped` immediately, and §10.1's choice about in-flight participants is
+recorded.
 
 ---
 
 ## Before sign-off
 
-1. Run `npm run test:integration` against a real Postgres and attach the result (§9).
-2. Decide on offer-level gating: implement `min_user_level` / `level_exclusive` /
-   early access on `campaigns`, or remove the promise from the level ladder copy
-   so the app stops advertising a benefit it does not deliver (§6).
-3. Add the config-driven feature block and rollout percentage (§10).
-4. Either implement `CONFIG_VERSION_CHANGED` or drop it from the documented
-   error list (§3).
-5. Finish the rewarded-ad client: SDK, AdMob ids, `customData`, SSV callback URL (§7).
-6. Rebuild the native app — `expo-image-picker` and `expo-location` are new
-   config-plugin dependencies, so evidence submission and location-gated
-   missions do not work on the currently installed APK.
+1. **Run `npm run test:integration` against a real Postgres and attach the
+   result.** This is the only outstanding item, and it now covers new code in
+   the hunt path.
+2. Finish the rewarded-ad client — SDK, AdMob ids, `customData`, SSV callback
+   URL. External dependency; nothing in this repository blocks it.
+3. Rebuild the native app: `expo-image-picker` and `expo-location` are
+   config-plugin dependencies the installed APK does not have, so evidence
+   submission and location-gated missions will not work until it is rebuilt.
+
+## Deliberately not done
+
+- **The public marketing page does not draw a lock.** `/` is the business
+  landing page — customer traffic goes to the app — so its campaign grid gets
+  the anonymous gate: exclusive offers are absent, level-gated ones are listed
+  without a lock badge. The server still refuses the hunt. Adding the badge is
+  cosmetic and belongs with any future work on that page.
+- **Moving the memo settlement lines into the billed net**, which §1.2 holds
+  until a separate approval.

@@ -26,9 +26,13 @@ import { all, getDb, one, run } from "@/server/db";
 import { centavosToLoyaltyPoints } from "@/server/rewards-network";
 import { sendPush, type PushResult } from "@/server/push";
 import { loadEconomy, loadLevels } from "./config";
+import { featureEnabledFor } from "./flags";
 import { evaluateEligibility, joinableMissionDefinitions, loadPlayerFacts } from "./missions";
 import { summarise } from "./rewards";
 import { manilaDate } from "./time";
+
+/** What a sender returns when the feature is switched off: nothing happened. */
+const NOTHING_SENT: PushResult = { sent: 0, skipped: 0, failed: 0 };
 
 /** The most mission pushes one player receives in a Manila day. */
 const MISSION_PUSH_DAILY_CAP = 3;
@@ -50,7 +54,22 @@ async function pushPolicy() {
   return {
     quietHours: economy.quietHours,
     dailyCap: MISSION_PUSH_DAILY_CAP,
+    // The kill switch for every notification this file sends. A fan-out picks
+    // its audience by query, so this is deliberately all-or-nothing rather than
+    // a per-player rollout — see the note on FeatureFlag.rolloutPercent.
+    enabled: featureEnabledFor(economy, "notifications", null),
   };
+}
+
+/**
+ * True when gamification notifications are switched on at all.
+ *
+ * Checked by each sender rather than inside `sendPush`, because `sendPush` is
+ * the transport for the whole product and a gamification flag has no business
+ * silencing a reservation reminder.
+ */
+async function notificationsEnabled() {
+  return (await pushPolicy()).enabled;
 }
 
 /**
@@ -72,6 +91,7 @@ export async function announceUrgentMission(input: {
   /** Stops the same campaign being announced twice if a publish is retried. */
   force?: boolean;
 }) {
+  if (!(await notificationsEnabled())) return { notified: 0, considered: 0 };
   const db = await getDb();
   const definition = (await joinableMissionDefinitions(db)).find(
     (candidate) =>
@@ -177,6 +197,7 @@ export async function announceDailyWindow(input: { missionKey: string }): Promis
   const db = await getDb();
   const date = manilaDate();
   const policy = await pushPolicy();
+  if (!policy.enabled) return { notified: 0 };
 
   const rows = await all(
     db,
@@ -222,6 +243,7 @@ export async function remindMissionsClosingSoon(input: { withinHours?: number } 
   const hours = input.withinHours ?? 4;
   const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
   const policy = await pushPolicy();
+  if (!policy.enabled) return { notified: 0 };
   const date = manilaDate();
 
   const rows = await all(
@@ -264,12 +286,13 @@ export async function remindMissionsClosingSoon(input: { withinHours?: number } 
 }
 
 /** An operator decided on a player's evidence. Transactional, not marketing. */
-export function notifyProofReviewed(input: {
+export async function notifyProofReviewed(input: {
   phone: string;
   approved: boolean;
   missionTitle: string;
   reason?: string;
 }): Promise<PushResult> {
+  if (!(await notificationsEnabled())) return NOTHING_SENT;
   return sendPush({
     phone: input.phone,
     category: "missions",
@@ -282,11 +305,12 @@ export function notifyProofReviewed(input: {
 }
 
 /** A promotion, announced once. The celebration screen still runs in the app. */
-export function notifyLevelUp(input: {
+export async function notifyLevelUp(input: {
   phone: string;
   level: number;
   levelName: string;
 }): Promise<PushResult> {
+  if (!(await notificationsEnabled())) return NOTHING_SENT;
   return sendPush({
     phone: input.phone,
     category: "rewards",
@@ -298,11 +322,12 @@ export function notifyLevelUp(input: {
 }
 
 /** A badge unlocked. One per tier, ever, which the dedupe key enforces. */
-export function notifyAchievementUnlocked(input: {
+export async function notifyAchievementUnlocked(input: {
   phone: string;
   title: string;
   tier: string;
 }): Promise<PushResult> {
+  if (!(await notificationsEnabled())) return NOTHING_SENT;
   return sendPush({
     phone: input.phone,
     category: "rewards",

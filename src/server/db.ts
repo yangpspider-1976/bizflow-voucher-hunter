@@ -1172,6 +1172,15 @@ async function ensureGamificationSchema(c: Client) {
     // A reserved quota place is given back exactly once, however many times the
     // expiry sweep passes over the row.
     ["user_missions", "quota_released", "INTEGER NOT NULL DEFAULT 0"],
+    // §3.4's Partner CMS row. Every default is the behaviour that existed
+    // before levels, so adding the columns changes no campaign already written.
+    ["campaigns", "min_user_level", "INTEGER NOT NULL DEFAULT 1"],
+    ["campaigns", "level_exclusive", "INTEGER NOT NULL DEFAULT 0"],
+    ["campaigns", "level_quota", "INTEGER NOT NULL DEFAULT 0"],
+    ["campaigns", "level_offer_label", "TEXT"],
+    // Null means "open now", which is what every campaign did before this
+    // existed. A level's head start is measured back from this instant.
+    ["campaigns", "early_access_at", "TEXT"],
     ["push_devices", "missions_enabled", "INTEGER NOT NULL DEFAULT 1"],
     // Urgent missions are marketing, and the requirements are explicit that they
     // honour marketing consent separately from transactional notifications.
@@ -1858,7 +1867,10 @@ export const seedData: {
       referralDailyLimit: 5,
       candidateTimeoutMinutes: 10,
       terms: "Valid for selected slot only. Minimum spend applies. One final voucher per phone number.",
-      allowReschedule: true
+      allowReschedule: true,
+      minUserLevel: 1,
+      levelExclusive: false,
+      levelQuota: 0
     },
     {
       id: "camp_8pm_drop",
@@ -1878,7 +1890,10 @@ export const seedData: {
       candidateTimeoutMinutes: 10,
       terms: "Valid within the selected drop window or stated expiry. One code per phone number.",
       shopUrl: "https://example.com/shop",
-      allowReschedule: false
+      allowReschedule: false,
+      minUserLevel: 1,
+      levelExclusive: false,
+      levelQuota: 0
     },
     {
       id: "camp_glow_facial",
@@ -1898,7 +1913,10 @@ export const seedData: {
       referralDailyLimit: 5,
       candidateTimeoutMinutes: 10,
       terms: "Valid for the selected appointment only. Non-transferable. One voucher per phone number.",
-      allowReschedule: true
+      allowReschedule: true,
+      minUserLevel: 1,
+      levelExclusive: false,
+      levelQuota: 0
     }
   ],
   slots: [
@@ -2528,7 +2546,12 @@ export const mapCampaign = (r: Row): Campaign => ({
   candidateTimeoutMinutes: r.candidate_timeout_minutes,
   terms: r.terms,
   shopUrl: r.shop_url ?? undefined,
-  allowReschedule: Boolean(r.allow_reschedule)
+  allowReschedule: Boolean(r.allow_reschedule),
+  minUserLevel: Number(r.min_user_level ?? 1),
+  levelExclusive: Boolean(Number(r.level_exclusive ?? 0)),
+  levelQuota: Number(r.level_quota ?? 0),
+  levelOfferLabel: r.level_offer_label ?? undefined,
+  earlyAccessAt: r.early_access_at ?? undefined
 });
 
 export const mapSlot = (r: Row): CampaignSlot => ({

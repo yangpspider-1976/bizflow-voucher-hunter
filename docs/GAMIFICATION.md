@@ -41,6 +41,8 @@ debits the LP and credits the XP **in one transaction**.
 | `src/server/gamification/time.ts` | Manila day boundaries and mission windows |
 | `src/server/gamification/rewards.ts` | **The central reward service.** The only thing that grants XP, LP, tickets or badges |
 | `src/server/gamification/levels.ts` | Level state and LP → XP conversion |
+| `src/server/gamification/offers.ts` | The level gate on a partner's campaign |
+| `src/server/gamification/flags.ts` | Feature switches and the gradual rollout |
 | `src/server/gamification/missions.ts` | Assignment, progress, completion, payout, expiry |
 | `src/server/gamification/achievements.ts` | Counters, tiers, streaks, distinct-thing counters, reversal |
 | `src/server/gamification/events.ts` | Event intake, deduplication, retry, dead-letter |
@@ -196,7 +198,10 @@ convention; the requirements' `/v1/...` paths map one-to-one).
 `QUOTA_EXHAUSTED` · `ALREADY_COMPLETED` · `REWARD_ALREADY_GRANTED` ·
 `BUDGET_EXHAUSTED` · `PROOF_REQUIRED` · `REVIEW_PENDING` · `CONFIG_VERSION_CHANGED`,
 carried on this codebase's
-`E-`-prefixed codes (`E-INSUFFICIENT-POINTS`, `E-MISSION-NOT-ACTIVE`, …).
+`E-`-prefixed codes (`E-INSUFFICIENT-POINTS`, `E-MISSION-NOT-ACTIVE`, …), plus
+`E-OFFER-NOT-OPEN` for a campaign whose opening time has not arrived and
+`E-FEATURE-DISABLED` (503) for one that is switched off — not a refusal of the
+player, which is why it is not a 403.
 
 ---
 
@@ -458,6 +463,91 @@ label each line accordingly.
 
 ---
 
+## Level-gated offers
+
+§3.4 lets a partner put four restrictions on a campaign, and §3.2 is explicit
+about how they must read: **a restriction is a goal, not a locked door.** So a
+locked card carries the level it wants, the XP still to earn, and stays tappable
+through to the campaign page.
+
+| Column on `campaigns` | Meaning | Default |
+| --- | --- | --- |
+| `min_user_level` | Nobody below this may hunt it | 1 — open |
+| `level_exclusive` | Hide it from those below, rather than showing it locked | off |
+| `level_quota` | Extra hunts a day it grants a qualifying player, on top of their level's own allowance | 0 |
+| `level_offer_label` | The partner's name for the offer | none |
+| `early_access_at` | When it opens to everybody; a level's `early_access_minutes` is measured back from this | null — open now |
+
+Every default is the behaviour that predates levels, so the columns changed no
+campaign already written, and `early_access_at` is the first "opens at" this
+product has had: without one there was no start for a head start to be ahead of.
+
+The decision is `evaluateOfferGate` in `@bizflow/shared` — pure, and shared, so
+the card the app draws and the refusal the server issues are the same function
+rather than two that agree by inspection. It is enforced at `startHunt` *and* at
+`generateCandidate`: the door and the draw, because the draw is what spends an
+attempt, a tier's stock and a slot's capacity.
+
+Three rules that are easy to get backwards:
+
+- **The level is answered before the clock.** A player three levels short does
+  not need to know the offer opens at six.
+- **A head start is only for somebody the level already admits.** Early access
+  to an offer you cannot hunt is not a benefit.
+- **Only the level gate hides a campaign.** One that has not opened yet shows
+  its opening time, because that is a countdown rather than a restriction.
+
+Unrestricted campaigns cost nothing to evaluate: the gate returns early before
+touching the database, and the public directory skips the ladder and level reads
+entirely unless some campaign in it actually has rules. The directory is the
+hottest public page in the product and it was not going to pay for a feature
+almost no campaign uses.
+
+---
+
+## Feature switches and rollout
+
+Every part of this can be stopped immediately and ramped gradually, from the
+same versioned economy configuration as everything else — so switching missions
+off at nine on a Friday is an operator publishing a version, with the audit
+trail that comes with it, rather than a deploy.
+
+| Switch | Covers |
+| --- | --- |
+| `levels` | The ladder, its benefits and the offer gates |
+| `conversion` | LP → XP, on its own, because it is the one that moves a partner's liability |
+| `missions` | Assignment, progress and payout |
+| `achievements` | Counters and unlocks |
+| `notifications` | Every push this feature sends |
+
+Each carries a `rolloutPercent`. Membership is a stable hash of the wallet id
+against the number, so **raising it only ever adds players** — a cohort that
+reshuffled would take the feature away from somebody who had it yesterday, which
+is worse than not rolling out at all. The feature name is mixed into the hash so
+two features at 10% do not pick the same tenth of the userbase and make one
+unlucky cohort look like a bad build. Notifications are a switch rather than a
+ramp — 0 or 100, refused otherwise — because a push fan-out picks its audience
+by query and a half-sent announcement is an unexplainable gap.
+
+Two rules hold everywhere:
+
+- **A flag gates earning and exposure, never a payout already earned.** A
+  mission finished this morning still pays when claimed this afternoon.
+- **Nothing is lost while a switch is off.** An event that arrives with the
+  whole rules engine off is written `Deferred` rather than judged, and
+  publishing an economy version — the only thing that can turn a feature back
+  on — requeues it. Deferred rows are deliberately not swept by the ordinary
+  retry pass: in creation order they would starve the events that can actually
+  be processed.
+
+The one case that is not deferred is a *half*-off configuration — missions off,
+achievements on. That half is skipped for events arriving while it is off and
+the row is finished, because retrying later would double-count the half that
+already ran, and a counter counted twice is worse than a mission that did not
+notice a redemption during a declared outage.
+
+---
+
 ## Configuration
 
 Nothing is hard-coded. `/dashboard/gamification` publishes new versions of the
@@ -472,6 +562,7 @@ Seeded MVP defaults (all changeable without a deploy):
 - Ad 5 LP + 10 XP; hunt 10 XP; voucher select 10 XP; QR 5 LP + 20 XP; four missions 30 XP
 - Achievement tiers pay badge + XP (25 / 75 / 200 / 500); LP is opt-in per tier
 - Daily LP grant cap 200 LP per player; single grants above 500 LP are held
+- Every feature on, at 100%
 
 ---
 
@@ -480,7 +571,7 @@ Seeded MVP defaults (all changeable without a deploy):
 ```bash
 npm run typecheck          # web + shared
 npm run mobile:typecheck   # Expo app
-npx vitest run tests/unit/gamification-levels.test.ts   tests/unit/gamification-time.test.ts   tests/unit/gamification-eligibility.test.ts   tests/unit/gamification-schema.test.ts
+npx vitest run tests/unit   # every gamification unit test runs without a database
 npm run test:integration   # needs TEST_DATABASE_URL
 ```
 
@@ -488,7 +579,10 @@ The unit tests cover the pure logic and run anywhere: level thresholds
 (including the exact-threshold and multi-level-jump cases the QA criteria name),
 ladder validation, Manila boundaries across a full year, window/grace rules,
 audience segments, quota arithmetic and the whole location-gate decision —
-including the mocked-fix refusal and the accuracy tolerance at the boundary.
+including the mocked-fix refusal and the accuracy tolerance at the boundary —
+plus the offer gate (the level lock, the missing-XP figure, exclusivity, and
+early access at both edges of the window) and the rollout hash, where the
+property worth asserting is that raising a percentage never removes anybody.
 
 `gamification-schema.test.ts` is a different kind of test and worth calling out.
 The DDL in `db.ts` is executed on the first request a cold process serves, so a
@@ -506,7 +600,14 @@ idempotency; and for Phase 2 and 3, joinable-card exposure, level-gated cards,
 both quota modes, quota release on expiry (exactly once), partner-scoped event
 matching, the whole evidence lifecycle including supersession and cross-partner
 refusal, the pre-flight bounds, the deposit refusal, and the separated partner
-statement.
+statement. `gamification-offer-gates.test.ts` covers the rest of the checklist's
+§6 and §10: a level-gated campaign refused at both the door and the draw, an
+exclusive one absent from the directory, a head start admitted before the
+opening, the gate standing down when levels are switched off, a conversion
+refused while the switch is off, an event deferred and requeued, and the
+economy-version guard — including that a *successful* conversion still replays
+after the terms move, because that retry describes something that already
+happened.
 
 ---
 

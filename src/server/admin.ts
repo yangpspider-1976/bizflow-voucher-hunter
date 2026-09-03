@@ -206,6 +206,12 @@ export type CreateCampaignInput = {
   shopUrl?: string;
   status?: Campaign["status"];
   allowReschedule?: boolean;
+  /** §3.4 level rules. Every one is optional and defaults to unrestricted. */
+  minUserLevel?: number;
+  levelExclusive?: boolean;
+  levelQuota?: number;
+  levelOfferLabel?: string;
+  earlyAccessAt?: string;
 };
 
 export type CreateSlotInput = {
@@ -263,12 +269,17 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
     candidateTimeoutMinutes: input.candidateTimeoutMinutes,
     terms: input.terms,
     shopUrl: input.shopUrl,
-    allowReschedule: input.allowReschedule ?? false
+    allowReschedule: input.allowReschedule ?? false,
+    minUserLevel: input.minUserLevel ?? 1,
+    levelExclusive: input.levelExclusive ?? false,
+    levelQuota: input.levelQuota ?? 0,
+    levelOfferLabel: input.levelOfferLabel?.trim() || undefined,
+    earlyAccessAt: input.earlyAccessAt || undefined
   };
   await run(
     db,
-    `INSERT INTO campaigns (id, business_id, slug, title, offer_message, hero_image, mode, location, status, start_date, end_date, base_attempts, referral_daily_limit, candidate_timeout_minutes, terms, shop_url, allow_reschedule)
-     VALUES (@id, @businessId, @slug, @title, @offerMessage, @heroImage, @mode, @location, @status, @startDate, @endDate, @baseAttempts, @referralDailyLimit, @candidateTimeoutMinutes, @terms, @shopUrl, @allowReschedule)`,
+    `INSERT INTO campaigns (id, business_id, slug, title, offer_message, hero_image, mode, location, status, start_date, end_date, base_attempts, referral_daily_limit, candidate_timeout_minutes, terms, shop_url, allow_reschedule, min_user_level, level_exclusive, level_quota, level_offer_label, early_access_at)
+     VALUES (@id, @businessId, @slug, @title, @offerMessage, @heroImage, @mode, @location, @status, @startDate, @endDate, @baseAttempts, @referralDailyLimit, @candidateTimeoutMinutes, @terms, @shopUrl, @allowReschedule, @minUserLevel, @levelExclusive, @levelQuota, @levelOfferLabel, @earlyAccessAt)`,
     {
       id: campaign.id,
       businessId: campaign.businessId,
@@ -286,7 +297,12 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
       candidateTimeoutMinutes: campaign.candidateTimeoutMinutes,
       terms: campaign.terms,
       shopUrl: campaign.shopUrl ?? null,
-      allowReschedule: campaign.allowReschedule ? 1 : 0
+      allowReschedule: campaign.allowReschedule ? 1 : 0,
+      minUserLevel: campaign.minUserLevel,
+      levelExclusive: campaign.levelExclusive ? 1 : 0,
+      levelQuota: campaign.levelQuota,
+      levelOfferLabel: campaign.levelOfferLabel ?? null,
+      earlyAccessAt: campaign.earlyAccessAt ?? null
     }
   );
   return campaign;
@@ -314,10 +330,15 @@ const CAMPAIGN_PATCH_COLUMNS: Record<string, string> = {
   candidateTimeoutMinutes: "candidate_timeout_minutes",
   terms: "terms",
   shopUrl: "shop_url",
-  allowReschedule: "allow_reschedule"
+  allowReschedule: "allow_reschedule",
+  minUserLevel: "min_user_level",
+  levelExclusive: "level_exclusive",
+  levelQuota: "level_quota",
+  levelOfferLabel: "level_offer_label",
+  earlyAccessAt: "early_access_at"
 };
 
-const CAMPAIGN_BOOLEAN_KEYS = new Set(["allowReschedule"]);
+const CAMPAIGN_BOOLEAN_KEYS = new Set(["allowReschedule", "levelExclusive"]);
 
 export async function updateCampaign(idOrSlug: string, patch: Partial<CreateCampaignInput>): Promise<Campaign> {
   const db = await getDb();

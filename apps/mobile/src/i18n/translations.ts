@@ -63,6 +63,10 @@ const en = {
   "home.filterAll": "All",
   "home.empty": "No campaigns match your search.",
   "home.huntNow": "Hunt now",
+  "home.offerLockedAt": "Level {level} offer - {xp} XP to go",
+  "home.offerLocked": "Level {level} offer",
+  "home.offerOpensAt": "Opens {time}",
+  "home.offerEarlyAccess": "Early access - yours now",
 
   // -- Campaign --
   "campaign.selected": "SELECTED CAMPAIGN",
@@ -562,6 +566,10 @@ const ko: Catalogue = {
   "home.filterAll": "전체",
   "home.empty": "검색과 일치하는 캠페인이 없습니다.",
   "home.huntNow": "헌트 시작",
+  "home.offerLockedAt": "레벨 {level} 전용 - {xp} XP 남음",
+  "home.offerLocked": "레벨 {level} 전용",
+  "home.offerOpensAt": "{time} 오픈",
+  "home.offerEarlyAccess": "우선 이용 - 지금 참여 가능",
 
   "campaign.selected": "선택한 캠페인",
   "campaign.readyTitle": "준비되셨나요?",
@@ -1041,6 +1049,10 @@ const zh: Catalogue = {
   "home.filterAll": "全部",
   "home.empty": "没有符合搜索条件的活动。",
   "home.huntNow": "立即参加",
+  "home.offerLockedAt": "等级 {level} 专属 - 还差 {xp} XP",
+  "home.offerLocked": "等级 {level} 专属",
+  "home.offerOpensAt": "{time} 开放",
+  "home.offerEarlyAccess": "抢先体验 - 现已开放",
 
   "campaign.selected": "已选活动",
   "campaign.readyTitle": "准备好了吗？",
@@ -1516,6 +1528,10 @@ const ja: Catalogue = {
   "home.filterAll": "すべて",
   "home.empty": "検索条件に一致するキャンペーンはありません。",
   "home.huntNow": "今すぐ参加",
+  "home.offerLockedAt": "レベル {level} 限定 - あと {xp} XP",
+  "home.offerLocked": "レベル {level} 限定",
+  "home.offerOpensAt": "{time} 公開",
+  "home.offerEarlyAccess": "先行アクセス - 今すぐ参加可能",
 
   "campaign.selected": "選択中のキャンペーン",
   "campaign.readyTitle": "準備はいいですか？",

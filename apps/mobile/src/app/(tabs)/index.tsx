@@ -32,6 +32,7 @@ import {
   campaignModeLabel,
   formatCampaignRange,
   localeFor,
+  offerLockLabel,
 } from "@/lib/format";
 import { colors, fonts, radius, spacing } from "@/theme";
 
@@ -223,6 +224,7 @@ export default function HomeScreen() {
               businessName,
               campaign,
               ended,
+              levelGate,
             }) => {
               const chip = MODE_CHIPS[businessIndustry] ?? MODE_CHIPS.other;
               // A full campaign stays tappable: its page still carries the
@@ -231,6 +233,11 @@ export default function HomeScreen() {
               // A finished one has nothing left to serve — the campaign
               // endpoints 404 on it — so its card is disabled outright.
               const bookable = availability.bookable;
+              // A locked offer stays tappable. The campaign page is where the
+              // level requirement is explained and where the way to earn it
+              // is linked from — a card that does nothing when tapped is a
+              // dead end, and §3.2 asks for a goal.
+              const locked = Boolean(levelGate?.locked) && !ended;
               return (
                 <Pressable
                   accessibilityRole="button"
@@ -294,8 +301,20 @@ export default function HomeScreen() {
                         localeFor(language),
                       )}
                     </Text>
-                    {bookable ? (
+                    {locked ? (
+                      <View style={styles.cardStatus}>
+                        <Icon name="lock" size={13} />
+                        <Text style={styles.cardStatusText}>
+                          {offerLockLabel(t, levelGate, localeFor(language))}
+                        </Text>
+                      </View>
+                    ) : bookable ? (
                       <View style={styles.cardCtaRow}>
+                        {levelGate?.earlyAccessActive ? (
+                          <Text style={styles.cardEarlyAccess}>
+                            {t("home.offerEarlyAccess")}
+                          </Text>
+                        ) : null}
                         <Text style={styles.cardCta}>{t("home.huntNow")}</Text>
                         <Icon name="arrow-right" size={15} />
                       </View>
@@ -472,10 +491,13 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   cardStatus: {
+    alignItems: "center",
     backgroundColor: colors.page,
     borderColor: colors.border,
     borderRadius: radius.pill,
     borderWidth: 1,
+    flexDirection: "row",
+    gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
@@ -512,6 +534,13 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontFamily: fonts.extrabold,
     fontSize: 13,
+  },
+  // The head start is worth saying out loud: it is the one level benefit a
+  // player experiences without being told they have it.
+  cardEarlyAccess: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
+    fontSize: 11,
   },
   empty: {
     backgroundColor: colors.surface,

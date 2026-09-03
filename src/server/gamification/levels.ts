@@ -24,6 +24,7 @@ import {
   recordRewardAudit,
 } from "@/server/rewards-network";
 import { loadEconomy, loadLevels } from "./config";
+import { assertFeatureEnabled } from "./flags";
 import { bumpCounter } from "./achievements";
 import { publishEvent } from "./events";
 import { creditXp } from "./rewards";
@@ -52,6 +53,13 @@ export type ConvertPointsInput = {
    * flaky network safe rather than expensive.
    */
   idempotencyKey: string;
+  /**
+   * The economy version the confirmation screen quoted, if the client sends
+   * one. A conversion that would run under different terms than the ones the
+   * player agreed to is refused rather than silently repriced — §9.1's
+   * CONFIG_VERSION_CHANGED.
+   */
+  expectedConfigVersion?: number | null;
 };
 
 /**
@@ -76,6 +84,9 @@ export async function convertPointsToXp(
       "SELECT * FROM point_xp_conversions WHERE idempotency_key = ?",
       [input.idempotencyKey],
     );
+    // The replay check comes first: a retry of a conversion that already
+    // succeeded returns its original result even if the terms have moved since,
+    // because that conversion happened under the old ones and did not change.
     if (replay) {
       const state = await levelStateFor(tx, wallet.id);
       return {
@@ -89,6 +100,25 @@ export async function convertPointsToXp(
         xpLedgerId: String(replay.xp_ledger_id ?? ""),
         loyaltyLedgerId: String(replay.loyalty_ledger_id ?? ""),
       } satisfies PointConversionResult;
+    }
+
+    assertFeatureEnabled(
+      economy,
+      "conversion",
+      wallet.id,
+      "Converting Loyalty Points into XP is paused right now. Your points are safe.",
+    );
+
+    if (
+      input.expectedConfigVersion !== undefined &&
+      input.expectedConfigVersion !== null &&
+      input.expectedConfigVersion !== configVersion
+    ) {
+      throw new AppError(
+        "E-CONFIG-VERSION-CHANGED",
+        "The conversion terms changed while you were deciding. Check the new rate and try again.",
+        409,
+      );
     }
 
     if (lpCentavos < economy.minConversionCentavos) {

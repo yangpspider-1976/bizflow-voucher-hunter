@@ -31,3 +31,11 @@ export const MAX_REFERRAL_DAILY_LIMIT = 1_000;
 export const MAX_CANDIDATE_TIMEOUT_MINUTES = 43_200;
 export const MAX_POOL_QUANTITY = 1_000_000;
 export const MAX_SLOT_CAPACITY = 100_000;
+
+// Level rules on a campaign (§3.4). The ladder is administrator-configured and
+// could in principle be longer than five, so this is a sanity ceiling rather
+// than the ladder's length: a campaign asking for level 99 has mistyped, and
+// the alternative is a campaign nobody can ever open with nothing to show why.
+export const MAX_LEVEL = 20;
+/** Extra hunts one campaign may grant a qualifying player per day. */
+export const MAX_LEVEL_QUOTA = 20;

@@ -4,7 +4,16 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { LevelDefinition } from "@bizflow/shared";
 import { api } from "@/lib/api-client";
-import type { EconomyConfig } from "@/server/gamification/config";
+import type { EconomyConfig, GamificationFeature } from "@/server/gamification/config";
+
+/** The five switches, in the order an operator would reach for them. */
+const FEATURE_LABELS: [GamificationFeature, string][] = [
+  ["levels", "Levels and level-gated offers"],
+  ["conversion", "LP → XP conversion"],
+  ["missions", "Missions"],
+  ["achievements", "Achievements"],
+  ["notifications", "Gamification notifications"],
+];
 
 /**
  * Publishes a new economy version.
@@ -32,6 +41,7 @@ export function EconomyForm({
   const [quietStart, setQuietStart] = useState(economy.quietHours.start);
   const [quietEnd, setQuietEnd] = useState(economy.quietHours.end);
   const [risk, setRisk] = useState(economy.risk);
+  const [features, setFeatures] = useState(economy.features);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -55,6 +65,7 @@ export function EconomyForm({
           reviewThresholdCentavos: Math.round(Number(reviewAt) * 100),
           quietHours: { start: quietStart, end: quietEnd },
           risk,
+          features,
           note: note || undefined,
         }),
       });
@@ -130,6 +141,56 @@ export function EconomyForm({
               type="number"
               value={risk[key]}
             />
+          </label>
+        ))}
+      </div>
+
+      <h3>Features and rollout</h3>
+      <p className="muted">
+        Turning one off stops it immediately for everybody, without a deploy.
+        Nothing already earned is lost: a claim on a finished mission still
+        pays, and events that arrive while the engine is off are kept and
+        replayed the next time a version is published. The percentage is a
+        gradual rollout — a player inside it stays inside it as the number
+        rises. Notifications are a switch only, so 0 or 100.
+      </p>
+      <div className="admin-form-grid">
+        {FEATURE_LABELS.map(([key, label]) => (
+          <label className="field" key={key}>
+            <span>{label}</span>
+            <div className="field-row">
+              <label className="switch-row">
+                <span className="switch">
+                  <input
+                    type="checkbox"
+                    checked={features[key].enabled}
+                    onChange={(event) =>
+                      setFeatures((current) => ({
+                        ...current,
+                        [key]: { ...current[key], enabled: event.target.checked },
+                      }))
+                    }
+                  />
+                  <span className="switch-track" aria-hidden="true" />
+                </span>
+                On
+              </label>
+              <input
+                aria-label={`${label} rollout percentage`}
+                disabled={!features[key].enabled}
+                max={100}
+                min={0}
+                onChange={(event) =>
+                  setFeatures((current) => ({
+                    ...current,
+                    [key]: { ...current[key], rolloutPercent: Number(event.target.value) },
+                  }))
+                }
+                type="number"
+                value={features[key].rolloutPercent}
+              />
+              <span className="muted">% of players</span>
+            </div>
           </label>
         ))}
       </div>

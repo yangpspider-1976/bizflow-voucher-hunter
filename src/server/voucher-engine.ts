@@ -5,6 +5,15 @@ import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools
 import { AppError } from "@/server/errors";
 import { onQrRedeemed } from "@/server/gamification/hooks";
 import { levelBonusHunts } from "@/server/gamification/levels";
+import {
+  assertOfferUnlocked,
+  gateWithViewer,
+  offerGateFor,
+  offerViewerFor,
+  OPEN_GATE
+} from "@/server/gamification/offers";
+import { featureEnabledFor } from "@/server/gamification/flags";
+import { loadEconomy } from "@/server/gamification/config";
 import { MAX_MONEY_DISPLAY, MAX_MONEY_PESOS } from "@/lib/limits";
 import {
   addCalendarDays,
@@ -246,7 +255,13 @@ async function countBonusAttemptsUsedToday(db: Exec, campaignId: string, userId:
 async function remainingLevelAttempts(db: Exec, campaign: Campaign, user: EndUser) {
   const wallet = await one(db, "SELECT id FROM reward_wallets WHERE phone = ?", [user.phone]);
   if (!wallet) return { allowance: 0, remaining: 0 };
-  const allowance = await levelBonusHunts(db, String(wallet.id));
+  // Two sources, added: the allowance the level carries everywhere, and the
+  // quota this particular campaign grants players it admits. A partner running
+  // a Pro Hunter night can hand out extra hunts on that campaign without
+  // changing what every level is worth on every other one.
+  const allowance =
+    (await levelBonusHunts(db, String(wallet.id))) +
+    (await offerGateFor(db, campaign, user.phone)).levelQuota;
   if (allowance <= 0) return { allowance: 0, remaining: 0 };
   const used = await one(
     db,
@@ -392,7 +407,7 @@ export async function publicSlots(campaignId: string) {
   return slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }));
 }
 
-export async function getPublicCampaign(slug: string) {
+export async function getPublicCampaign(slug: string, viewerPhone?: string | null) {
   const db = await getDb();
   const campaign = await getCampaignOrThrow(db, slug);
   const businessRow = await one(db, "SELECT * FROM businesses WHERE id = ?", [campaign.businessId]);
@@ -412,7 +427,13 @@ export async function getPublicCampaign(slug: string) {
     // rule the draw applies, instead of spending an attempt to find out.
     availability:
       (await availabilityByCampaign(db, [campaign.id])).get(campaign.id) ??
-      NO_AVAILABILITY
+      NO_AVAILABILITY,
+    // Where the viewer stands against this campaign's level rules. Always
+    // present, even when nothing is locked, so the page renders one shape.
+    // A campaign page is reachable by its slug whatever the gate says: an
+    // exclusive offer is hidden from the directory, not made to 404 for
+    // somebody who was sent the link.
+    levelGate: await offerGateFor(db, campaign, viewerPhone ?? null)
   };
 }
 
@@ -533,7 +554,9 @@ const ENDED_CARD_RETENTION_DAYS = 30;
  * as closed rather than dropping. Paused campaigns are a business hiding a
  * campaign it intends to resume, so those stay out of the list entirely.
  */
-export async function listPublicCampaignCards(): Promise<CampaignCard[]> {
+export async function listPublicCampaignCards(
+  viewerPhone?: string | null,
+): Promise<CampaignCard[]> {
   const db = await getDb();
   const today = manilaDateString();
   const rows = await all(
@@ -549,11 +572,30 @@ export async function listPublicCampaignCards(): Promise<CampaignCard[]> {
     db,
     rows.map((r) => String(r.id))
   );
+  // One ladder read and one level read for the whole directory, rather than one
+  // pair per card — and none at all when no campaign has level rules, which is
+  // the ordinary case and the one on the hottest public page in the product.
+  const anyRestricted = rows.some(
+    (r) =>
+      Number(r.min_user_level ?? 1) > 1 ||
+      Number(r.level_quota ?? 0) > 0 ||
+      r.early_access_at != null,
+  );
+  const viewerContext = anyRestricted
+    ? await offerViewerFor(db, viewerPhone ?? null)
+    : null;
+  const levelsEnabled =
+    viewerContext !== null &&
+    featureEnabledFor((await loadEconomy(db)).economy, "levels", viewerContext.walletId);
+  const now = new Date().toISOString();
   return rows
     .map((r) => {
       const campaign = mapCampaign(r);
       const ended = campaign.status !== "active" || campaign.endDate < today;
       return {
+        levelGate: viewerContext
+          ? gateWithViewer(campaign, viewerContext, { levelsEnabled, now })
+          : OPEN_GATE,
         campaign,
         businessName: String(r.business_name),
         businessLogo: String(r.business_logo),
@@ -571,12 +613,18 @@ export async function listPublicCampaignCards(): Promise<CampaignCard[]> {
         ended
       };
     })
+    // An invitation-only offer is not in the directory of somebody it is not
+    // for. Every other restriction is shown, locked and labelled, because §3.2
+    // wants a restriction to read as a goal — hiding it would remove the goal
+    // along with the offer.
+    .filter((card) => !card.levelGate.hidden)
     // Campaigns a customer cannot act on sink below the ones they can, and
     // finished ones sink below those again. Array#sort is stable, so date order
     // is preserved within each group.
     .sort(
       (a, b) =>
         Number(a.ended) - Number(b.ended) ||
+        Number(a.levelGate.locked) - Number(b.levelGate.locked) ||
         Number(b.availability.bookable) - Number(a.availability.bookable)
     );
 }
@@ -655,6 +703,10 @@ export async function startHunt(input: {
   const result = await withTx(async (tx) => {
     const campaign = await getCampaignOrThrow(tx, input.campaignSlug);
     const user = await findOrCreateUser(tx, campaign.id, input.phone, input.sessionId, input.name, input.email);
+    // The level gate is checked here as well as at the draw. Refusing at the
+    // door is kinder than letting somebody through the hunt screen and only
+    // then telling them the offer was never theirs to hunt.
+    await assertOfferUnlocked(tx, campaign, user.phone);
     await addAnalytics(tx, campaign.id, "hunt_started", { phone: user.phone }, user.id);
     return { campaign, user };
   });
@@ -709,6 +761,8 @@ export function generateCandidate(input: {
   return withTx(async (tx) => {
     const campaign = await getCampaignOrThrow(tx, input.campaignSlug);
     const user = await findOrCreateUser(tx, campaign.id, input.phone, input.sessionId);
+    // Before anything is spent: an attempt, a tier's stock, a slot's capacity.
+    await assertOfferUnlocked(tx, campaign, user.phone);
     if (await hasFinalVoucher(tx, campaign.id, user.id)) {
       throw new AppError("E-DUPLICATE-FINAL", "Final voucher already issued", 409);
     }

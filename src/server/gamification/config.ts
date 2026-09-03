@@ -48,6 +48,64 @@ export type EconomyConfig = {
    * tripped it should be an operator changing a number, not a deploy.
    */
   risk: RiskThresholds;
+  /**
+   * Per-feature kill switches and rollout percentages.
+   *
+   * §17 asks that every feature can be stopped immediately and rolled out
+   * gradually. This is where that lives, rather than in an environment
+   * variable, for the same reason every other number does: operations turning
+   * something off at nine on a Friday must not need a deployment, and the
+   * version history is the record of who turned what off and when.
+   */
+  features: Record<GamificationFeature, FeatureFlag>;
+};
+
+/**
+ * The five things that can be switched off independently.
+ *
+ * `levels` covers the ladder, its benefits and the offer gates; `conversion` is
+ * LP → XP on its own, because that is the one that moves a partner's liability
+ * and is the most likely to need stopping while everything else keeps running.
+ */
+export type GamificationFeature =
+  | "levels"
+  | "conversion"
+  | "missions"
+  | "achievements"
+  | "notifications";
+
+export type FeatureFlag = {
+  enabled: boolean;
+  /**
+   * 0-100. The share of players the feature is live for, chosen by a stable
+   * hash of the wallet id, so raising the number only ever adds people and a
+   * player never falls out of a cohort they were in yesterday.
+   *
+   * `notifications` is the exception and must be 0 or 100: a push fan-out
+   * decides its audience by query rather than one player at a time, and a
+   * half-rolled-out announcement would be a silent, unexplainable gap in who
+   * heard about a campaign. It is a switch, and publishing anything else for it
+   * is refused.
+   */
+  rolloutPercent: number;
+};
+
+export const FEATURE_KEYS: GamificationFeature[] = [
+  "levels",
+  "conversion",
+  "missions",
+  "achievements",
+  "notifications",
+];
+
+const FULLY_ON: FeatureFlag = { enabled: true, rolloutPercent: 100 };
+
+export const DEFAULT_FEATURES: Record<GamificationFeature, FeatureFlag> = {
+  levels: FULLY_ON,
+  conversion: FULLY_ON,
+  missions: FULLY_ON,
+  achievements: FULLY_ON,
+  notifications: FULLY_ON,
 };
 
 export type RiskThresholds = {
@@ -88,6 +146,7 @@ export const DEFAULT_ECONOMY: EconomyConfig = {
   reviewThresholdCentavos: 500_00,
   quietHours: { start: "22:00", end: "08:00" },
   risk: DEFAULT_RISK,
+  features: DEFAULT_FEATURES,
 };
 
 export const DEFAULT_LEVELS: LevelDefinition[] = [
@@ -179,6 +238,23 @@ async function activeConfigRow(db: Exec, key: ConfigKey) {
   );
 }
 
+function mergeFeatures(
+  parsed: Partial<Record<GamificationFeature, Partial<FeatureFlag>>> | undefined,
+): Record<GamificationFeature, FeatureFlag> {
+  const merged = {} as Record<GamificationFeature, FeatureFlag>;
+  for (const key of FEATURE_KEYS) {
+    const stored = parsed?.[key];
+    merged[key] = {
+      enabled: stored?.enabled ?? true,
+      rolloutPercent: clampPercent(stored?.rolloutPercent ?? 100),
+    };
+  }
+  return merged;
+}
+
+const clampPercent = (value: number) =>
+  !Number.isFinite(value) ? 100 : Math.min(100, Math.max(0, Math.round(value)));
+
 export type LoadedEconomy = { version: number; economy: EconomyConfig };
 
 /**
@@ -201,6 +277,10 @@ export async function loadEconomy(db: Exec): Promise<LoadedEconomy> {
       ...parsed,
       quietHours: { ...DEFAULT_ECONOMY.quietHours, ...(parsed.quietHours ?? {}) },
       risk: { ...DEFAULT_RISK, ...(parsed.risk ?? {}) },
+      // A payload written before flags existed reads back as fully on, which is
+      // the behaviour it had. A missing flag must never read as "off": that
+      // would turn an old config version into an outage.
+      features: mergeFeatures(parsed.features),
     },
   };
 }
@@ -301,6 +381,30 @@ function assertEconomyIsSane(economy: EconomyConfig) {
   }
   if (economy.dailyLpGrantCapCentavos < 0 || economy.reviewThresholdCentavos < 0) {
     throw new AppError("E-CONFIG-INVALID", "Budget caps cannot be negative", 400);
+  }
+  for (const key of FEATURE_KEYS) {
+    const flag = economy.features?.[key];
+    if (!flag) {
+      throw new AppError("E-CONFIG-INVALID", `Feature "${key}" is missing a flag`, 400);
+    }
+    if (
+      !Number.isInteger(flag.rolloutPercent) ||
+      flag.rolloutPercent < 0 ||
+      flag.rolloutPercent > 100
+    ) {
+      throw new AppError(
+        "E-CONFIG-INVALID",
+        `Rollout for "${key}" must be a whole percentage between 0 and 100`,
+        400,
+      );
+    }
+    if (key === "notifications" && flag.rolloutPercent !== 0 && flag.rolloutPercent !== 100) {
+      throw new AppError(
+        "E-CONFIG-INVALID",
+        "Notifications are a switch, not a ramp: use 0 or 100",
+        400,
+      );
+    }
   }
 }
 

@@ -356,6 +356,30 @@ export type GamificationProfile = {
    */
   levelUpToAnnounce: number | null;
   configVersion: number;
+  /**
+   * Which parts of the system are running for this player right now.
+   *
+   * The server has already applied these — a switched-off feature comes back
+   * empty rather than populated-but-forbidden — so the app uses them to decide
+   * what to draw, never what to allow. A tab for a feature that is off is worse
+   * than no tab: it is a dead end with no explanation.
+   */
+  features: GamificationFeatures;
+};
+
+export type GamificationFeatures = {
+  levels: boolean;
+  conversion: boolean;
+  missions: boolean;
+  achievements: boolean;
+};
+
+/** Everything on, which is what a client that cannot see the field assumes. */
+export const ALL_FEATURES_ON: GamificationFeatures = {
+  levels: true,
+  conversion: true,
+  missions: true,
+  achievements: true,
 };
 
 export type AchievementUnlockNotice = {
@@ -417,3 +441,141 @@ export type MissionProofResult = {
   state: MissionState;
   proof: MissionProofState;
 };
+
+/* Level-gated offers -------------------------------------------------------- */
+
+/**
+ * The level restrictions a partner may put on one campaign.
+ *
+ * All four are opt-in and their defaults are exactly the behaviour that existed
+ * before levels: level 1, not exclusive, no head start, no extra hunts. A
+ * campaign nobody has configured is open to everybody, as it always was.
+ */
+export type OfferLevelRules = {
+  /** Nobody below this level may hunt the campaign. 1 means no restriction. */
+  minUserLevel: number;
+  /**
+   * Hide the campaign from players below `minUserLevel` instead of showing it
+   * locked. §3.2 says a restriction should read as a goal, so this is off by
+   * default and is meant for the invitation-only offers at the top of the
+   * ladder — the ones whose existence is itself the privilege.
+   */
+  levelExclusive: boolean;
+  /**
+   * Extra hunts per day this campaign grants a qualifying player, on top of the
+   * allowance their level already carries. 0 means none.
+   */
+  levelQuota: number;
+  /** The partner's own name for the level offer, shown on the card. */
+  levelOfferLabel: string | null;
+  /**
+   * When the campaign opens to everybody, as an ISO instant. Null means it is
+   * open now, which is what every campaign written before this field did.
+   * A level's `earlyAccessMinutes` is subtracted from this and from nothing
+   * else — a head start needs a start to be ahead of.
+   */
+  earlyAccessAt: string | null;
+};
+
+export const OPEN_OFFER_RULES: OfferLevelRules = {
+  minUserLevel: 1,
+  levelExclusive: false,
+  levelQuota: 0,
+  levelOfferLabel: null,
+  earlyAccessAt: null,
+};
+
+/** What the viewer's own standing contributes to the decision. */
+export type OfferViewer = {
+  level: number;
+  lifetimeXp: number;
+  /** From the viewer's level definition. 0 for a signed-out visitor. */
+  earlyAccessMinutes: number;
+};
+
+/** A signed-out visitor is judged as the floor of the ladder, never as unknown. */
+export const ANONYMOUS_VIEWER: OfferViewer = {
+  level: 1,
+  lifetimeXp: 0,
+  earlyAccessMinutes: 0,
+};
+
+export type OfferGate = {
+  /** True when the server would refuse a hunt on this campaign right now. */
+  locked: boolean;
+  reason: "LEVEL_REQUIRED" | "NOT_OPEN" | null;
+  /** Always present, so the card can say what the offer is for. */
+  requiredLevel: number;
+  /** XP still to earn to reach `requiredLevel`; null when already there. */
+  missingXp: number | null;
+  /** When it opens to everybody. Null when it is always open. */
+  opensAt: string | null;
+  /** When it opens for this viewer — earlier than `opensAt` with a head start. */
+  opensForViewerAt: string | null;
+  /** True while the viewer is inside their head start and others are not. */
+  earlyAccessActive: boolean;
+  /** Extra hunts this campaign grants the viewer, once they qualify. */
+  levelQuota: number;
+  label: string | null;
+  /** Keep the campaign out of the viewer's list entirely. */
+  hidden: boolean;
+};
+
+const minXpForLevel = (ladder: readonly LevelDefinition[], level: number) => {
+  const match = [...ladder].sort((a, b) => a.minXp - b.minXp).find((d) => d.level >= level);
+  return match ? match.minXp : null;
+};
+
+/**
+ * Whether one viewer may hunt one campaign, and what to tell them if not.
+ *
+ * Pure, and shared, so the card the app renders and the refusal the server
+ * issues are the same decision rather than two that agree by inspection.
+ *
+ * The order matters: the level gate is answered before the clock. A player
+ * three levels short does not need to know the offer opens at six — the level
+ * is the thing they can do something about, and §4's rule that the first true
+ * reason wins applies here for the same reason it applies to missions.
+ */
+export function evaluateOfferGate(
+  rules: OfferLevelRules,
+  viewer: OfferViewer,
+  ladder: readonly LevelDefinition[],
+  nowIso: string,
+): OfferGate {
+  const requiredLevel = Math.max(1, Math.floor(rules.minUserLevel));
+  const belowLevel = viewer.level < requiredLevel;
+  const threshold = minXpForLevel(ladder, requiredLevel);
+  const missingXp =
+    belowLevel && threshold !== null ? Math.max(0, threshold - viewer.lifetimeXp) : null;
+
+  // A head start is only ever granted to somebody the level gate already
+  // admits: early access to an offer you cannot hunt is not a benefit.
+  const headStartMinutes = belowLevel ? 0 : Math.max(0, viewer.earlyAccessMinutes);
+  const opensAt = rules.earlyAccessAt;
+  const opensForViewerAt =
+    opensAt === null
+      ? null
+      : new Date(new Date(opensAt).getTime() - headStartMinutes * 60_000).toISOString();
+
+  const now = new Date(nowIso).getTime();
+  const beforeViewerOpening = opensForViewerAt !== null && now < new Date(opensForViewerAt).getTime();
+  const earlyAccessActive =
+    opensAt !== null && headStartMinutes > 0 && !beforeViewerOpening && now < new Date(opensAt).getTime();
+
+  const locked = belowLevel || beforeViewerOpening;
+  return {
+    locked,
+    reason: belowLevel ? "LEVEL_REQUIRED" : beforeViewerOpening ? "NOT_OPEN" : null,
+    requiredLevel,
+    missingXp,
+    opensAt,
+    opensForViewerAt,
+    earlyAccessActive,
+    levelQuota: Math.max(0, Math.floor(rules.levelQuota)),
+    label: rules.levelOfferLabel,
+    // Only the level gate hides a campaign. One that is merely not open yet is
+    // shown with its opening time — that is a countdown, not a restriction.
+    hidden: belowLevel && rules.levelExclusive,
+  };
+}

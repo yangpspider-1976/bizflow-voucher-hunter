@@ -10,6 +10,7 @@ import type {
   AchievementTier,
   AchievementTierState,
   ConvertibleWallet,
+  GamificationFeatures,
   GamificationProfile,
 } from "@bizflow/shared";
 import { ACHIEVEMENT_TIERS, levelForXp } from "@bizflow/shared";
@@ -18,6 +19,7 @@ import { normalizePhone } from "@/server/phone";
 import { centavosToLoyaltyPoints, ensureRewardWallet } from "@/server/rewards-network";
 import { unseenUnlocks } from "./achievements";
 import { loadEconomy, loadLevels, parseRewardLines } from "./config";
+import { featureEnabledFor } from "./flags";
 import { ensureDailyMissions, listMissionCards, liveMissionDefinitions } from "./missions";
 import { addSummaries, EMPTY_REWARD, summarise } from "./rewards";
 import { manilaDate, manilaDayEndUtc } from "./time";
@@ -41,7 +43,9 @@ export async function gamificationProfile(input: {
   phone: string;
 }): Promise<GamificationProfile> {
   const walletId = await resolveWallet(input.phone);
-  await ensureTodaysMissions(walletId);
+  const features = await featuresFor(walletId);
+  // Nothing is assigned to somebody the missions feature is not running for.
+  if (features.missions) await ensureTodaysMissions(walletId);
 
   return withReadTx(async (tx) => {
     const { levels, version: levelVersion } = await loadLevels(tx);
@@ -56,13 +60,15 @@ export async function gamificationProfile(input: {
     const level = levelForXp(levels, lifetimeXp);
     const date = manilaDate();
 
-    const missions = await listMissionCards(tx, {
-      walletId,
-      level: level.level,
-      lifetimeXp,
-      date,
-    });
-    const achievements = await achievementCards(tx, walletId);
+    const missions = features.missions
+      ? await listMissionCards(tx, {
+          walletId,
+          level: level.level,
+          lifetimeXp,
+          date,
+        })
+      : [];
+    const achievements = features.achievements ? await achievementCards(tx, walletId) : [];
 
     const claimable = missions
       .filter((mission) => mission.state === "CLAIMABLE")
@@ -91,8 +97,27 @@ export async function gamificationProfile(input: {
       // The economy is what the app's numbers were computed under; the ladder
       // version moves independently and rides along in `levels`.
       configVersion: economyVersion || levelVersion,
+      features,
     } satisfies GamificationProfile;
   });
+}
+
+/**
+ * Which features are running for one player.
+ *
+ * Read once per profile request and passed down, so every panel on the screen
+ * agrees — a rollout that admitted a player to missions but not to the mission
+ * count in the header would be worse than not rolling out at all.
+ */
+export async function featuresFor(walletId: string): Promise<GamificationFeatures> {
+  const db = await getDb();
+  const { economy } = await loadEconomy(db);
+  return {
+    levels: featureEnabledFor(economy, "levels", walletId),
+    conversion: featureEnabledFor(economy, "conversion", walletId),
+    missions: featureEnabledFor(economy, "missions", walletId),
+    achievements: featureEnabledFor(economy, "achievements", walletId),
+  };
 }
 
 /**

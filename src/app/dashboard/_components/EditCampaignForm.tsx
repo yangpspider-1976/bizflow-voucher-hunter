@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { FiImage, FiUploadCloud } from "react-icons/fi";
 import { api } from "@/lib/api-client";
 import { resolveCampaignImage } from "@/lib/campaign-image";
+import { MAX_LEVEL, MAX_LEVEL_QUOTA } from "@/lib/limits";
 import type { Campaign, CampaignSlot } from "@/types/voucher";
 import { FormCard } from "./FormPage";
 import { normalizeCampaignImage } from "./NewCampaignForm";
@@ -34,7 +35,23 @@ function formState(campaign: Campaign) {
     baseAttempts: String(campaign.baseAttempts),
     referralDailyLimit: String(campaign.referralDailyLimit),
     candidateTimeoutMinutes: String(campaign.candidateTimeoutMinutes),
+    minUserLevel: String(campaign.minUserLevel ?? 1),
+    levelExclusive: Boolean(campaign.levelExclusive),
+    levelQuota: String(campaign.levelQuota ?? 0),
+    levelOfferLabel: campaign.levelOfferLabel ?? "",
+    // The input is a local datetime; the API takes an instant. Converted on the
+    // way in and out rather than stored twice.
+    earlyAccessAt: toLocalInput(campaign.earlyAccessAt),
   };
+}
+
+/** An ISO instant as the value an input[type=datetime-local] expects. */
+function toLocalInput(iso: string | undefined) {
+  if (!iso) return "";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
 function slotDate(date: string) {
@@ -153,6 +170,20 @@ export function EditCampaignForm({
     // it alone" rather than silently failing its `url()` check.
     if (form.shopUrl.trim() && form.shopUrl.trim() !== initial.shopUrl) {
       patch.shopUrl = form.shopUrl.trim();
+    }
+    if (form.minUserLevel !== initial.minUserLevel) {
+      patch.minUserLevel = Number(form.minUserLevel) || 1;
+    }
+    if (form.levelExclusive !== initial.levelExclusive) patch.levelExclusive = form.levelExclusive;
+    if (form.levelQuota !== initial.levelQuota) patch.levelQuota = Number(form.levelQuota) || 0;
+    if (form.levelOfferLabel.trim() !== initial.levelOfferLabel.trim()) {
+      patch.levelOfferLabel = form.levelOfferLabel.trim();
+    }
+    // Same rule as the shop URL: an emptied field means "leave it", because the
+    // API has no way to say "open it to everybody again" other than not sending
+    // the field at all.
+    if (form.earlyAccessAt && form.earlyAccessAt !== initial.earlyAccessAt) {
+      patch.earlyAccessAt = new Date(form.earlyAccessAt).toISOString();
     }
     if (replacementSelected && image) patch.heroImage = image;
     return patch;
@@ -345,6 +376,78 @@ export function EditCampaignForm({
             onChange={(event) => update("terms", event.target.value)}
           />
         </label>
+      </FormCard>
+
+      <FormCard
+        title="Level access"
+        description="Who may hunt this campaign. Leave the minimum at level 1 and the campaign is open to everyone, which is how every campaign behaved before levels existed."
+      >
+        <div className="admin-form-grid">
+          <label className="field">
+            <span>Minimum level</span>
+            <input
+              max={MAX_LEVEL}
+              min={1}
+              type="number"
+              value={form.minUserLevel}
+              onChange={(event) => update("minUserLevel", event.target.value)}
+            />
+            <small className="muted">
+              Below this, the card shows a lock, the level it needs and the XP still to earn.
+            </small>
+          </label>
+          <label className="field">
+            <span>Extra hunts for qualifying players</span>
+            <input
+              max={MAX_LEVEL_QUOTA}
+              min={0}
+              type="number"
+              value={form.levelQuota}
+              onChange={(event) => update("levelQuota", event.target.value)}
+            />
+            <small className="muted">
+              Added to the daily allowance their level already grants. 0 for none.
+            </small>
+          </label>
+          <label className="field">
+            <span>Offer label</span>
+            <input
+              maxLength={60}
+              placeholder="e.g. Pro Hunter menu"
+              type="text"
+              value={form.levelOfferLabel}
+              onChange={(event) => update("levelOfferLabel", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Opens at</span>
+            <input
+              type="datetime-local"
+              value={form.earlyAccessAt}
+              onChange={(event) => update("earlyAccessAt", event.target.value)}
+            />
+            <small className="muted">
+              Leave empty to open immediately. Levels with early access can hunt before this.
+            </small>
+          </label>
+        </div>
+
+        <label className="switch-row">
+          <span className="switch">
+            <input
+              type="checkbox"
+              checked={form.levelExclusive}
+              onChange={(event) => update("levelExclusive", event.target.checked)}
+            />
+            <span className="switch-track" aria-hidden="true" />
+          </span>
+          Hide from players below the minimum level
+        </label>
+        <p className="muted">
+          Off by default, and usually the right choice: a locked card players can see is a reason
+          to level up, and one they cannot is nothing at all. Turn it on only for offers whose
+          existence is itself the privilege.
+        </p>
       </FormCard>
 
       <FormCard

@@ -21,6 +21,8 @@ import { all, getDb, one, run, withTx, type Exec } from "@/server/db";
 import { reportError } from "@/server/monitoring";
 import { ensureRewardWallet } from "@/server/rewards-network";
 import { bumpCounter, bumpDistinctCounter } from "./achievements";
+import { loadEconomy } from "./config";
+import { featureEnabledFor } from "./flags";
 import { applyEventToMissions, type MissionProgressOutcome } from "./missions";
 
 const isoNow = () => new Date().toISOString();
@@ -63,8 +65,12 @@ export type PublishEventInput = {
   amountCentavos?: number | null;
   deviceIdHash?: string | null;
   metadata?: Record<string, unknown>;
-  /** Pending means the rules engine still has work to do on this row. */
-  status?: "Pending" | "Processed" | "Ignored";
+  /**
+   * Pending means the rules engine still has work to do on this row. Deferred
+   * means a feature flag was off when it arrived: the fact is kept, and
+   * `requeueDeferredEvents` puts it back in the queue when the flag returns.
+   */
+  status?: "Pending" | "Processed" | "Ignored" | "Deferred";
 };
 
 /**
@@ -156,10 +162,12 @@ export async function ingestEvent(input: IngestInput): Promise<IngestResult> {
 
     await run(
       tx,
-      "UPDATE gamification_events SET status = 'Processed', processed_at = ? WHERE idempotency_key = ?",
-      [isoNow(), input.idempotencyKey],
+      "UPDATE gamification_events SET status = ?, processed_at = ? WHERE idempotency_key = ?",
+      result.deferred
+        ? ["Deferred", null, input.idempotencyKey]
+        : ["Processed", isoNow(), input.idempotencyKey],
     );
-    return { accepted: true, ...result };
+    return { accepted: true, missions: result.missions, unlocked: result.unlocked };
   });
 }
 
@@ -201,7 +209,25 @@ type ApplyInput = {
  * same fact be counted from two directions.
  */
 async function applyEvent(tx: Exec, input: ApplyInput) {
-  const missions = MISSION_TRIGGERS.has(input.eventName)
+  const { economy } = await loadEconomy(tx);
+  const missionsOn = featureEnabledFor(economy, "missions", input.walletId);
+  const achievementsOn = featureEnabledFor(economy, "achievements", input.walletId);
+
+  // With the whole engine switched off for this player the event is kept and
+  // not judged. Nothing is lost: the row waits as Deferred and is requeued when
+  // the flags come back, so a stop-the-world switch costs history rather than
+  // destroying it.
+  //
+  // With only one half off, that half is skipped for events that happen while
+  // it is off and the row is finished. Retrying the other half later would
+  // double-count the half that already ran, and a counter counted twice is a
+  // worse outcome than a mission that did not notice a redemption during an
+  // outage the operator declared.
+  if (!missionsOn && !achievementsOn) {
+    return { missions: [] as MissionProgressOutcome[], unlocked: [] as AchievementUnlockNotice[], deferred: true };
+  }
+
+  const missions = missionsOn && MISSION_TRIGGERS.has(input.eventName)
     ? await applyEventToMissions(tx, {
         walletId: input.walletId,
         phone: input.phone,
@@ -213,7 +239,7 @@ async function applyEvent(tx: Exec, input: ApplyInput) {
     : [];
 
   const unlocked: AchievementUnlockNotice[] = [];
-  const counter = COUNTER_FOR_EVENT[input.eventName];
+  const counter = achievementsOn ? COUNTER_FOR_EVENT[input.eventName] : undefined;
   if (counter) {
     unlocked.push(
       ...(await bumpCounter(tx, {
@@ -227,7 +253,7 @@ async function applyEvent(tx: Exec, input: ApplyInput) {
 
   // City Explorer counts partners, not visits, so it needs the partner's id and
   // a membership row rather than an increment.
-  if (input.eventName === "qr_redeem" && input.partnerId) {
+  if (achievementsOn && input.eventName === "qr_redeem" && input.partnerId) {
     unlocked.push(
       ...(await bumpDistinctCounter(tx, {
         walletId: input.walletId,
@@ -239,7 +265,7 @@ async function applyEvent(tx: Exec, input: ApplyInput) {
     );
   }
 
-  return { missions, unlocked };
+  return { missions, unlocked, deferred: false };
 }
 
 /** Events a mission definition may name as its trigger. */
@@ -293,10 +319,11 @@ export async function processPendingEvents(options: { limit?: number; maxRetries
 
   let processed = 0;
   let failed = 0;
+  let deferred = 0;
   for (const row of pending) {
     try {
-      await withTx(async (tx) => {
-        await applyEvent(tx, {
+      const outcome = await withTx(async (tx) => {
+        const applied = await applyEvent(tx, {
           walletId: String(row.wallet_id),
           phone: String(row.phone ?? ""),
           eventName: String(row.event_name) as GamificationEventName,
@@ -304,13 +331,19 @@ export async function processPendingEvents(options: { limit?: number; maxRetries
           partnerId: row.partner_id ? String(row.partner_id) : null,
           objectId: row.object_id ? String(row.object_id) : null,
         });
+        // A row deferred by a flag is not a failure and must not burn a retry:
+        // it is waiting for an operator, not for the network.
         await run(
           tx,
-          "UPDATE gamification_events SET status = 'Processed', processed_at = ? WHERE event_id = ?",
-          [isoNow(), String(row.event_id)],
+          "UPDATE gamification_events SET status = ?, processed_at = ? WHERE event_id = ?",
+          applied.deferred
+            ? ["Deferred", null, String(row.event_id)]
+            : ["Processed", isoNow(), String(row.event_id)],
         );
+        return applied;
       });
-      processed += 1;
+      if (outcome.deferred) deferred += 1;
+      else processed += 1;
     } catch (error) {
       failed += 1;
       await run(
@@ -324,7 +357,24 @@ export async function processPendingEvents(options: { limit?: number; maxRetries
       );
     }
   }
-  return { processed, failed, pending: pending.length };
+  return { processed, failed, deferred, pending: pending.length };
+}
+
+/**
+ * Puts flag-deferred events back in the queue.
+ *
+ * Called when an economy version is published, because that is the only thing
+ * that can turn a feature back on. Deferred rows are deliberately not swept up
+ * by the ordinary retry pass: while a feature is off they would be re-read on
+ * every run, in creation order, and starve the events that can actually be
+ * processed. So they wait for the switch that unblocks them.
+ */
+export async function requeueDeferredEvents(db: Exec) {
+  const moved = await run(
+    db,
+    "UPDATE gamification_events SET status = 'Pending', retry_count = 0 WHERE status = 'Deferred'",
+  );
+  return { requeued: Number(moved ?? 0) };
 }
 
 /** Events an operator needs to look at. Surfaced on the admin dashboard. */

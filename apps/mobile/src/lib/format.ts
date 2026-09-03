@@ -1,4 +1,4 @@
-import type { CampaignAvailability, VoucherPool } from "@bizflow/shared";
+import type { CampaignAvailability, OfferGate, VoucherPool } from "@bizflow/shared";
 
 import type { Language, TranslationKey } from "@/i18n/translations";
 
@@ -189,4 +189,39 @@ export function voucherStatusLabel(t: Translate, status: string) {
   if (status === "redeemed") return t("vouchers.statusRedeemed");
   if (status === "expired") return t("vouchers.statusExpired");
   return status;
+}
+
+/**
+ * What a locked campaign card says.
+ *
+ * The level comes first because it is the reason the player can act on. An
+ * offer that has simply not opened yet says when — a countdown is information,
+ * not a restriction — and one whose level they lack says the level and the XP,
+ * which is what turns a lock into a goal.
+ */
+export function offerLockLabel(
+  t: Translate,
+  gate: OfferGate | undefined,
+  locale: string,
+) {
+  if (!gate) return "";
+  if (gate.reason === "LEVEL_REQUIRED") {
+    return gate.missingXp === null
+      ? t("home.offerLocked", { level: gate.requiredLevel })
+      : t("home.offerLockedAt", {
+          level: gate.requiredLevel,
+          xp: gate.missingXp.toLocaleString(locale),
+        });
+  }
+  const opensAt = gate.opensForViewerAt ?? gate.opensAt;
+  if (!opensAt) return "";
+  return t("home.offerOpensAt", {
+    time: new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      month: "short",
+      timeZone: "Asia/Manila",
+    }).format(new Date(opensAt)),
+  });
 }

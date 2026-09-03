@@ -14,6 +14,12 @@ const schema = z.object({
    * which of the two happened.
    */
   idempotencyKey: z.string().min(8).max(128),
+  /**
+   * The economy version the confirmation screen quoted. Optional, because an
+   * older client does not send it, and absent means "whatever is live" — the
+   * behaviour before this existed.
+   */
+  expectedConfigVersion: z.number().int().nonnegative().nullable().optional(),
 });
 
 export const dynamic = "force-dynamic";
@@ -43,6 +49,7 @@ export async function POST(request: Request) {
         businessId: input.businessId ?? null,
         amount: input.amount,
         idempotencyKey: input.idempotencyKey,
+        expectedConfigVersion: input.expectedConfigVersion ?? null,
       }),
     );
   } catch (error) {

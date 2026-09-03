@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     const db = await getDb();
     const walletId = await resolveWallet(phone);
     const { levels, version } = await loadLevels(db);
-    const { economy } = await loadEconomy(db);
+    const { economy, version: economyVersion } = await loadEconomy(db);
     const xpRow = await one(db, "SELECT lifetime_xp FROM user_levels WHERE wallet_id = ?", [
       walletId,
     ]);
@@ -30,6 +30,10 @@ export async function GET(request: Request) {
       levels,
       configVersion: version,
       current: levelForXp(levels, Number(xpRow?.lifetime_xp ?? 0)),
+      // The economy version behind the terms below. The confirmation screen
+      // sends it back with the conversion so the server can refuse to convert
+      // on terms the player never saw.
+      economyVersion,
       conversion: {
         xpPerLp: economy.xpPerLp,
         minLpCentavos: economy.minConversionCentavos,
