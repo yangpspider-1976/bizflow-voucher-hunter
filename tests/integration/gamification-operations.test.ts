@@ -12,7 +12,7 @@
  *
  * Case numbers refer to the manual plan.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { all, getDb, one, resetDb, run, withTx } from "@/server/db";
 import { runAnomalyScan, actionFraudSignal, listFraudSignals } from "@/server/gamification/anomaly";
 import {
@@ -25,7 +25,17 @@ import { DEFAULT_ECONOMY, loadEconomy, publishEconomy } from "@/server/gamificat
 import { ingestEvent } from "@/server/gamification/events";
 import { convertPointsToXp } from "@/server/gamification/levels";
 import { gamificationProfile } from "@/server/gamification/profile";
+import {
+  decideMissionReview,
+  publishMissionDefinition,
+} from "@/server/gamification/mission-admin";
+import { announceUrgentMission, notifyProofReviewed } from "@/server/gamification/notify";
 import { grantReward, listHeldRewards, settleHeldReward } from "@/server/gamification/rewards";
+import {
+  partnerGamificationStatement,
+  statementToCsv,
+} from "@/server/gamification/settlement";
+import { registerPushDevice, setPushPreferences } from "@/server/push";
 import { ensureRewardWallet } from "@/server/rewards-network";
 
 const phone = "+639171110301";
@@ -341,5 +351,289 @@ describe("the KPI panel", () => {
     const [header] = csv.split("\n");
     expect(header).toContain("mission");
     expect(csv).toContain("daily_hunt");
+  });
+});
+
+describe("notifications", () => {
+  const deviceToken = "ExponentPushToken[ops-device-aaa]";
+
+  beforeEach(async () => {
+    await resetDb();
+    await ensureRewardWallet(await getDb(), { phone });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Stands in for Expo's push service; every send reports an `ok` ticket. */
+  function mockExpoOk() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ data: [{ status: "ok", id: "ticket-1" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+  }
+
+  /** A campaign that announces itself, published live by operations. */
+  async function publishAnnounceable(missionKey: string) {
+    return publishMissionDefinition(
+      { actor: "ops@test", partnerIds: null, canApprove: true },
+      {
+        missionKey,
+        type: "URGENT",
+        title: "Off-peak lunch",
+        description: "Visit on a weekday afternoon.",
+        triggerEvent: "qr_redeem",
+        targetCount: 1,
+        window: null,
+        minLevel: 1,
+        partnerId: partner,
+        reward: [{ type: "XP", amount: 50 }],
+        condition: {},
+        audience: { segment: "all" },
+        autoClaim: true,
+        requiresProof: false,
+        quotaMode: "ON_COMPLETION",
+        userQuota: 1,
+        globalQuota: null,
+        rewardBudgetCentavos: null,
+        status: "Active",
+        startsAt: null,
+        endsAt: null,
+        // "app" never announces; a campaign has to ask for the push.
+        exposureChannel: "both",
+        termsUrl: null,
+        localizationKey: null,
+        sortOrder: 100,
+      },
+    );
+  }
+
+  // T20. An urgent campaign is marketing, and marketing needs consent on top of
+  // the missions category.
+  it("announces a campaign only to players who left marketing on", async () => {
+    mockExpoOk();
+    await registerPushDevice({ phone, expoPushToken: deviceToken, platform: "android" });
+    await setPushPreferences({ phone, marketing: false });
+
+    const published = await publishAnnounceable("urgent_ops_consent");
+    const withoutConsent = await announceUrgentMission({
+      missionKey: published.missionKey,
+      definitionVersion: published.definitionVersion,
+    });
+    expect(withoutConsent.notified).toBe(0);
+
+    await setPushPreferences({ phone, marketing: true });
+    const withConsent = await announceUrgentMission({
+      missionKey: published.missionKey,
+      definitionVersion: published.definitionVersion,
+      force: true,
+    });
+    expect(withConsent.notified).toBe(1);
+  });
+
+  // T20. "Your evidence was approved" is not marketing, and does not ask.
+  it("delivers a transactional notice to a player who declined marketing", async () => {
+    mockExpoOk();
+    await registerPushDevice({ phone, expoPushToken: deviceToken, platform: "android" });
+    await setPushPreferences({ phone, marketing: false });
+
+    const result = await notifyProofReviewed({
+      phone,
+      approved: true,
+      missionTitle: "Off-peak lunch",
+    });
+
+    expect(result.sent).toBe(1);
+  });
+
+  // T20. The blackout is a published economy setting, and the opt-out is per
+  // device because the setting is.
+  it("holds a campaign push during quiet hours unless the device opted out", async () => {
+    mockExpoOk();
+    await registerPushDevice({ phone, expoPushToken: deviceToken, platform: "android" });
+    // 23:00 Manila, inside the seeded 22:00-08:00 blackout.
+    vi.setSystemTime(new Date("2026-07-03T15:00:00.000Z"));
+
+    const published = await publishAnnounceable("urgent_ops_quiet");
+    const asleep = await announceUrgentMission({
+      missionKey: published.missionKey,
+      definitionVersion: published.definitionVersion,
+    });
+    expect(asleep.notified).toBe(0);
+
+    await setPushPreferences({ phone, quietHours: false });
+    const awake = await announceUrgentMission({
+      missionKey: published.missionKey,
+      definitionVersion: published.definitionVersion,
+      force: true,
+    });
+    expect(awake.notified).toBe(1);
+  });
+
+  // T20. Three a day, however many campaigns happen to launch.
+  it("stops at three mission pushes in a Manila day", async () => {
+    mockExpoOk();
+    await registerPushDevice({ phone, expoPushToken: deviceToken, platform: "android" });
+
+    const delivered: number[] = [];
+    for (let index = 1; index <= 4; index += 1) {
+      const published = await publishAnnounceable(`urgent_ops_cap_${index}`);
+      const result = await announceUrgentMission({
+        missionKey: published.missionKey,
+        definitionVersion: published.definitionVersion,
+      });
+      delivered.push(result.notified);
+    }
+
+    // The fourth campaign is live and visible in the app; it just does not
+    // interrupt anybody a fourth time.
+    expect(delivered).toEqual([1, 1, 1, 0]);
+  });
+});
+
+describe("the pre-flight, at both moments", () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  /** A partner-funded campaign, written by the partner and sent for review. */
+  async function submitPartnerFunded(missionKey: string, budgetCentavos: number) {
+    return publishMissionDefinition(
+      { actor: "partner@test", partnerIds: [partner], canApprove: false },
+      {
+        missionKey,
+        type: "URGENT",
+        title: "Partner-funded lunch",
+        description: "Visit on a weekday afternoon.",
+        triggerEvent: "qr_redeem",
+        targetCount: 1,
+        window: null,
+        minLevel: 1,
+        partnerId: partner,
+        reward: [{ type: "LP", amount: 10_00, fundingSource: "PARTNER" }],
+        condition: {},
+        audience: { segment: "all" },
+        autoClaim: true,
+        requiresProof: false,
+        quotaMode: "ON_COMPLETION",
+        userQuota: 1,
+        globalQuota: 5,
+        rewardBudgetCentavos: budgetCentavos,
+        status: "Active",
+        startsAt: null,
+        endsAt: null,
+        exposureChannel: "app",
+        termsUrl: null,
+        localizationKey: null,
+        sortOrder: 100,
+      },
+    );
+  }
+
+  // T16. The deposit is checked again at approval, because both the audience
+  // and the money move between writing a campaign and somebody approving it.
+  // A campaign that was affordable on Monday is not necessarily affordable on
+  // Wednesday, and the approval is the moment that commits it.
+  it("refuses at approval a campaign the deposit stopped covering", async () => {
+    const db = await getDb();
+    await run(db, "UPDATE businesses SET deposit_balance_centavos = ? WHERE id = ?", [
+      100_000_00,
+      partner,
+    ]);
+
+    const submitted = await submitPartnerFunded("urgent_ops_deposit", 50_00);
+    // Queued rather than live: a partner cannot approve its own campaign.
+    expect(submitted.status).toBe("Review");
+
+    // The deposit is spent between the writing and the approval.
+    await run(db, "UPDATE businesses SET deposit_balance_centavos = 0 WHERE id = ?", [
+      partner,
+    ]);
+
+    await expect(
+      decideMissionReview({
+        scope: { actor: "ops@test", partnerIds: null, canApprove: true },
+        missionKey: submitted.missionKey,
+        definitionVersion: submitted.definitionVersion,
+        decision: "Approved",
+        activate: true,
+        note: "Approving without re-reading the deposit",
+      }),
+    ).rejects.toThrow(/deposit/i);
+
+    // And it stays in review rather than being half-approved.
+    const row = await one(
+      db,
+      "SELECT status FROM mission_definitions WHERE mission_key = ? AND definition_version = ?",
+      [submitted.missionKey, submitted.definitionVersion],
+    );
+    expect(String(row?.status)).toBe("Review");
+  });
+
+  // T16. The same campaign goes through once the money is there.
+  it("approves the campaign once the deposit covers it again", async () => {
+    const db = await getDb();
+    await run(db, "UPDATE businesses SET deposit_balance_centavos = ? WHERE id = ?", [
+      100_000_00,
+      partner,
+    ]);
+    const submitted = await submitPartnerFunded("urgent_ops_deposit_ok", 50_00);
+
+    await decideMissionReview({
+      scope: { actor: "ops@test", partnerIds: null, canApprove: true },
+      missionKey: submitted.missionKey,
+      definitionVersion: submitted.definitionVersion,
+      decision: "Approved",
+      activate: true,
+      note: "Deposit checked against the worst case",
+    });
+
+    const row = await one(
+      db,
+      "SELECT status FROM mission_definitions WHERE mission_key = ? AND definition_version = ?",
+      [submitted.missionKey, submitted.definitionVersion],
+    );
+    expect(String(row?.status)).toBe("Active");
+  });
+});
+
+describe("the partner statement export", () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // T19. Finance works from the CSV, so the five lines have to survive the
+  // export with their labels — a memo line that reads as billed in a
+  // spreadsheet is the whole risk this report exists to avoid.
+  it("carries the five lines and their billing labels into the CSV", async () => {
+    const statement = await partnerGamificationStatement({
+      businessId: partner,
+      period: "2026-07",
+    });
+
+    const csv = statementToCsv(statement);
+    const header = csv.split("\n")[0]!.toLowerCase();
+    expect(header).toContain("line");
+
+    for (const label of [
+      "Purchase accruals",
+      "Voucher use",
+      "Mission rewards",
+      "Achievement rewards",
+      "Level conversions",
+    ]) {
+      expect(csv).toContain(label);
+    }
+
+    // Billed and memo are told apart in the file itself, not just on screen.
+    expect(csv.toLowerCase()).toContain("memo");
+    expect(csv.toLowerCase()).toContain("billed");
   });
 });

@@ -108,7 +108,14 @@ export async function announceUrgentMission(input: {
 
   const candidates = await all(
     db,
-    `SELECT DISTINCT w.id AS wallet_id, w.phone AS phone
+    // `created_at` is selected because it is ordered on: PostgreSQL requires
+    // every ORDER BY expression to appear in the select list of a SELECT
+    // DISTINCT, since otherwise the rows being ordered are not the rows being
+    // returned. SQLite allowed it, so this threw on every announcement — the
+    // campaign published and the fan-out that was meant to follow it errored
+    // instead. Selecting it changes nothing about which wallets come back: it
+    // is functionally dependent on `w.id`, which is already there.
+    `SELECT DISTINCT w.id AS wallet_id, w.phone AS phone, w.created_at AS created_at
      FROM push_devices d
      JOIN reward_wallets w ON w.phone = d.phone
      WHERE d.missions_enabled = 1 AND d.marketing_enabled = 1
