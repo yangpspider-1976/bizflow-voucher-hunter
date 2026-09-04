@@ -8,7 +8,34 @@
  *   EXPO_PUBLIC_APP_LINK_HOST – bare hostname (no scheme) that should open the app,
  *                               e.g. "vouchers.example.com". Optional; when unset
  *                               only the custom scheme is registered.
+ *   EXPO_PUBLIC_ADMOB_ANDROID_APP_ID / EXPO_PUBLIC_ADMOB_IOS_APP_ID
+ *                             – AdMob application ids (the "~" kind). Optional;
+ *                               the published Google test ids are used when unset,
+ *                               so a build without an AdMob account still runs.
  */
+
+/**
+ * AdMob application ids, baked into the manifest at build time.
+ *
+ * These are not the ad unit ids — they identify the app to the Google Mobile
+ * Ads SDK, and the SDK **crashes at launch** if the value is missing or
+ * malformed. That is why the fallback is Google's own published test
+ * application id rather than an empty string: a build made without the AdMob
+ * account configured still starts, still shows test ads, and still exercises
+ * the whole rewarded flow. Only the money is missing.
+ *
+ * Real ids come from the environment at build time, so the value that ships is
+ * an ops decision like the API host above it, not something baked into git.
+ *
+ * Note these carry a `~` between the two halves. The ad *unit* ids used at
+ * runtime carry a `/`, and mixing the two up is the most common way to get an
+ * SDK that initialises and then never fills.
+ */
+const TEST_ANDROID_APP_ID = "ca-app-pub-3940256099942544~3347511713";
+const TEST_IOS_APP_ID = "ca-app-pub-3940256099942544~1458002511";
+
+const androidAppId = process.env.EXPO_PUBLIC_ADMOB_ANDROID_APP_ID?.trim() || TEST_ANDROID_APP_ID;
+const iosAppId = process.env.EXPO_PUBLIC_ADMOB_IOS_APP_ID?.trim() || TEST_IOS_APP_ID;
 
 /** Brand purple — `--purple` in the web's globals.css. */
 const BRAND_PURPLE = "#5c3dff";
@@ -142,6 +169,19 @@ module.exports = {
         {
           locationAlwaysAndWhenInUsePermission:
             "Voucher Hunt uses your location only to check you are near a partner when you join a nearby mission.",
+        },
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          androidAppId,
+          iosAppId,
+          // The SDK starts itself on the first ad request rather than at
+          // launch. Nothing asks for an ad until a player taps an ad mission,
+          // so initialising eagerly would be a cold-start cost for a feature
+          // most sessions never touch.
+          optimizeInitialization: true,
+          optimizeAdLoading: true,
         },
       ],
       [

@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { ALL_FEATURES_ON, type MissionCard } from "@bizflow/shared";
 
-import { claimMission, joinMission } from "@/api/client";
+import { claimMission, getMission, joinMission, requestAdNonce } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { ErrorState } from "@/components/ErrorState";
 import { Icon } from "@/components/Icon";
@@ -13,6 +13,7 @@ import {
   useGamificationFocusRefresh,
 } from "@/gamification/GamificationContext";
 import { LevelCard } from "@/gamification/LevelCard";
+import { adsAvailable, watchRewardedAd } from "@/gamification/ads";
 import { readMissionLocation } from "@/gamification/location";
 import { MissionRow } from "@/gamification/MissionRow";
 import { LevelUpCelebration } from "@/gamification/LevelUpCelebration";
@@ -61,6 +62,7 @@ export default function QuestsScreen() {
   useGamificationFocusRefresh();
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
   const [joiningKey, setJoiningKey] = useState<string | null>(null);
+  const [watchingKey, setWatchingKey] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
 
   // The Urgent tab is everything that is not the daily set. A partner or
@@ -130,6 +132,56 @@ export default function QuestsScreen() {
         setClaimError(caught instanceof Error ? caught.message : t("mission.joinFailed"));
       } finally {
         setJoiningKey(null);
+      }
+    },
+    [refresh, t, token],
+  );
+
+  /**
+   * Watches a rewarded ad for one of the three daily ad missions.
+   *
+   * The mission is not completed here. The server mints a signed nonce, the ad
+   * carries it, and Google's SSV callback is what credits the player. So on a
+   * completed view all this does is go and look again — re-reading the one
+   * mission rather than trusting the local state, because the callback is a
+   * separate network hop from the ad closing and usually lands a moment later.
+   *
+   * If it has not landed by the last look, that is a delay and not a loss: the
+   * callback still credits the mission whenever it arrives, so the message says
+   * so instead of implying the view was wasted.
+   */
+  const onWatchAd = useCallback(
+    async (mission: MissionCard) => {
+      if (!token) return;
+      setWatchingKey(mission.missionKey);
+      setClaimError(null);
+      try {
+        const { customData } = await requestAdNonce(token);
+        const outcome = await watchRewardedAd(customData);
+
+        if (outcome.status === "unavailable") {
+          setClaimError(t("mission.adUnavailable"));
+          return;
+        }
+        if (outcome.status === "dismissed") {
+          setClaimError(t("mission.adDismissed"));
+          return;
+        }
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await new Promise((settle) => setTimeout(settle, 1_200));
+          const credited = await getMission(mission.missionKey, token).catch(() => null);
+          if (credited && credited.state !== "AVAILABLE") {
+            await refresh();
+            return;
+          }
+        }
+        await refresh();
+        setClaimError(t("mission.adPending"));
+      } catch (caught) {
+        setClaimError(caught instanceof Error ? caught.message : t("mission.adUnavailable"));
+      } finally {
+        setWatchingKey(null);
       }
     },
     [refresh, t, token],
@@ -239,6 +291,10 @@ export default function QuestsScreen() {
                   onClaim={onClaim}
                   onJoin={onJoin}
                   onOpen={onOpen}
+                  // Withheld where no ad can be shown, so the row never offers
+                  // a button that could only fail. Expo Go is the usual case.
+                  onWatchAd={adsAvailable() ? onWatchAd : undefined}
+                  watchingAd={watchingKey === mission.missionKey}
                 />
               ))
             )}

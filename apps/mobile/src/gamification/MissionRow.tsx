@@ -23,8 +23,10 @@ export function MissionRow({
   onClaim,
   onJoin,
   onOpen,
+  onWatchAd,
   claiming,
   joining,
+  watchingAd,
 }: {
   mission: MissionCard;
   onClaim?: (mission: MissionCard) => void;
@@ -32,8 +34,11 @@ export function MissionRow({
   onJoin?: (mission: MissionCard) => void;
   /** Opens the details screen, where evidence is sent. */
   onOpen?: (mission: MissionCard) => void;
+  /** Only passed when this build can actually show a rewarded ad. */
+  onWatchAd?: (mission: MissionCard) => void;
   claiming?: boolean;
   joining?: boolean;
+  watchingAd?: boolean;
 }) {
   const t = useTranslation();
   const done = mission.state === "CLAIMED";
@@ -48,6 +53,12 @@ export function MissionRow({
   // A window mission outside its hours is not failed, just not now. Saying so
   // is the difference between "come back at lunch" and "this is broken".
   const asleep = !mission.windowOpen && !done && !claimable;
+  // An ad mission is the one kind the app can start on its own: there is no
+  // partner to visit and nothing to prove, just a video to watch. Offered only
+  // inside its window, because starting an ad that cannot credit the mission
+  // would spend the player's attention for nothing.
+  const watchable =
+    mission.triggerEvent === "ad_reward_verified" && !done && !claimable && !asleep && !!onWatchAd;
 
   // Why a campaign cannot be joined, in the player's words. The level case is
   // deliberately absent: it already has its own line with the XP still to go,
@@ -149,7 +160,18 @@ export function MissionRow({
         {reasonText ? <Text style={styles.asleep}>{reasonText}</Text> : null}
       </View>
 
-      {claimable && onClaim ? (
+      {watchable ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={watchingAd}
+          onPress={() => onWatchAd!(mission)}
+          style={({ pressed }) => [styles.claim, pressed && styles.claimPressed]}
+        >
+          <Text style={styles.claimText}>
+            {watchingAd ? t("mission.adLoading") : t("mission.watchAd")}
+          </Text>
+        </Pressable>
+      ) : claimable && onClaim ? (
         <Pressable
           accessibilityRole="button"
           disabled={claiming}
