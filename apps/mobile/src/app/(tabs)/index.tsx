@@ -1,4 +1,4 @@
-import type { CampaignCard } from "@bizflow/shared";
+import { ALL_FEATURES_ON, type CampaignCard } from "@bizflow/shared";
 import { type Href, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -147,14 +147,19 @@ export default function HomeScreen() {
         {/* Above the directory on purpose: the level card is what makes a
             return visit feel like continuing something rather than starting
             over, and it is the shortcut into today's missions. */}
-        {profile ? (
+        {profile && (profile.features ?? ALL_FEATURES_ON).levels ? (
           <LevelCard
             level={profile.level}
             onPress={() => router.push("/quests" as Href)}
-            subtitle={t("quests.subtitle", {
-              done: profile.missions.filter((mission) => mission.state === "CLAIMED").length,
-              total: profile.missions.length,
-            })}
+            subtitle={
+              (profile.features ?? ALL_FEATURES_ON).missions
+                ? t("quests.subtitle", {
+                    done: profile.missions.filter((mission) => mission.state === "CLAIMED")
+                      .length,
+                    total: profile.missions.length,
+                  })
+                : undefined
+            }
           />
         ) : null}
 
