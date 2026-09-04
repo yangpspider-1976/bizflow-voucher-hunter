@@ -175,6 +175,7 @@ convention; the requirements' `/v1/...` paths map one-to-one).
 | POST | `/api/public/gamification/missions/{key}/proof` | Submit evidence (photo, receipt or note) |
 | POST | `/api/public/gamification/missions/{key}/claim` | Claim a finished mission |
 | GET | `/api/public/gamification/achievements` | Every badge group and tier |
+| POST | `/api/public/gamification/achievements/featured` | Put one unlocked badge on the profile, or take it off (max three) |
 | POST | `/api/public/gamification/achievements/seen` | Acknowledge celebration screens (badge unlocks and the level-up screen) |
 | POST | `/api/public/gamification/ads/nonce` | Mint the signed `custom_data` for a rewarded ad |
 | GET | `/api/public/gamification/ads/ssv` | AdMob SSV callback (called by Google, not the app) |
@@ -424,6 +425,36 @@ own tables. There is no separate analytics store, which is the point: the
 dashboard and the ledger cannot disagree about what happened. Date ranges are
 Manila days converted to UTC instants once, so "yesterday" is the same yesterday
 on every panel. The mission funnel exports as CSV.
+The Voucher area is the hunt&rarr;select&rarr;booking&rarr;QR funnel, split by
+level, discount band and partner, plus how much of the level-gated stock is
+actually being taken up. Two things about it are deliberate. Each stage counts
+on its own timestamp inside the window rather than following one cohort forward,
+so a voucher won in one month and redeemed in the next lands where the
+settlement puts it. And the level dimension is the hunter's level *now*, not at
+the moment of the hunt: nothing snapshots a level onto an attempt, and adding a
+write to the hunt path to satisfy a report would be the wrong trade. The panel
+says so rather than implying a precision the data does not carry.
+
+---
+
+## Profile badges
+
+§5.3 lets a player show one to three unlocked badges on their profile. The
+choice lives as `featured_at` on the unlock row in `user_achievements` rather
+than in a list of its own, which is what makes two rules free instead of
+enforced: only an unlocked badge can be featured, and an administrator revoking
+a badge takes it off the profile in the same write, because the read only ever
+counted unrevoked rows.
+
+The endpoint is a toggle, not a whole-list write. Sending the entire selection
+would let two devices racing overwrite each other's choice wholesale; a toggle
+can only ever disagree about the badge that was actually tapped. Featuring a
+badge that is already featured keeps its original position rather than moving it
+to the end of the row, and clearing one that is not featured is a no-op — both
+because this is a button a player taps, and a double tap on a slow connection
+must not be a different outcome from a single one. The cap is counted inside the
+transaction, so two taps racing cannot both see two and both write a third.
+
 
 ---
 

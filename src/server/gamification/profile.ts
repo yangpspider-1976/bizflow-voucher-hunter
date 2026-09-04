@@ -231,7 +231,7 @@ export async function achievementCards(
   );
   const unlockedRows = await all(
     db,
-    `SELECT group_key, tier, unlocked_at FROM user_achievements
+    `SELECT group_key, tier, unlocked_at, featured_at FROM user_achievements
      WHERE wallet_id = ? AND revoked_at IS NULL`,
     [walletId],
   );
@@ -240,7 +240,10 @@ export async function achievementCards(
     progressRows.map((row) => [String(row.counter_key), Number(row.counter_value)]),
   );
   const unlocked = new Map(
-    unlockedRows.map((row) => [`${row.group_key}:${row.tier}`, String(row.unlocked_at)]),
+    unlockedRows.map((row) => [
+      `${row.group_key}:${row.tier}`,
+      { at: String(row.unlocked_at), featured: Boolean(row.featured_at) },
+    ]),
   );
 
   const grouped = new Map<string, Record<string, unknown>[]>();
@@ -262,13 +265,13 @@ export async function achievementCards(
     for (const tier of ACHIEVEMENT_TIERS) {
       const row = rows.find((candidate) => String(candidate.tier) === tier);
       if (!row) continue;
-      const unlockedAt = unlocked.get(`${groupKey}:${tier}`);
+      const hit = unlocked.get(`${groupKey}:${tier}`);
       tiers.push({
         tier: tier as AchievementTier,
         threshold: Number(row.threshold),
         reward: summarise(parseRewardLines(row.reward_json ? String(row.reward_json) : null)),
-        unlocked: Boolean(unlockedAt),
-        ...(unlockedAt ? { unlockedAt } : {}),
+        unlocked: Boolean(hit),
+        ...(hit ? { unlockedAt: hit.at, featured: hit.featured } : {}),
       });
     }
 

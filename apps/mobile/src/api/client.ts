@@ -1,5 +1,6 @@
 import type {
   AchievementCard,
+  AchievementTier,
   AchievementUnlockNotice,
   Business,
   Campaign,
@@ -10,6 +11,8 @@ import type {
   EndUser,
   ErrorResponse,
   GamificationProfile,
+  LevelDefinition,
+  LevelState,
   LoyaltyDailyStatus,
   MissionCard,
   MissionClaimResult,
@@ -629,6 +632,53 @@ export function purchaseRewardProduct(
 
 export function getGamificationProfile(token: string): Promise<GamificationProfile> {
   return apiRequest<GamificationProfile>("/api/public/gamification/profile", { token });
+}
+
+/** One level-gated offer, as the Level Details screen lists it. */
+export type LevelGatedOffer = {
+  level: number;
+  slug: string;
+  title: string;
+  partnerName: string;
+  label: string | null;
+};
+
+export type LevelLadder = {
+  levels: LevelDefinition[];
+  partnersByLevel: LevelGatedOffer[];
+  configVersion: number;
+  current: LevelState;
+  economyVersion: number;
+};
+
+/**
+ * The whole ladder, plus the offers waiting on each rung.
+ *
+ * Separate from the profile because it is a screen a player opens on purpose
+ * rather than something every launch needs, and the partner list behind it is
+ * a join the profile has no reason to pay for.
+ */
+export function getLevelLadder(token: string): Promise<LevelLadder> {
+  return apiRequest<LevelLadder>("/api/public/gamification/levels", { token });
+}
+
+/**
+ * Puts one unlocked badge on the profile, or takes it off.
+ *
+ * A toggle rather than a whole-list write: two devices racing on a list would
+ * overwrite each other wholesale, where a toggle can only disagree about the
+ * badge that was actually tapped. Returns the resulting row of featured
+ * badges, so the caller never has to guess what the server settled on.
+ */
+export function setFeaturedBadge(
+  input: { groupKey: string; tier: AchievementTier; featured: boolean },
+  token: string,
+): Promise<{ featured: { groupKey: string; tier: AchievementTier }[] }> {
+  return apiRequest("/api/public/gamification/achievements/featured", {
+    method: "POST",
+    body: input,
+    token,
+  });
 }
 
 export function listMissions(

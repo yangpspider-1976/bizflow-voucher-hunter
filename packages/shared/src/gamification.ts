@@ -309,7 +309,12 @@ export type AchievementTierState = {
   unlocked: boolean;
   /** ISO, set only once unlocked. */
   unlockedAt?: string;
+  /** Chosen by the player to show on their profile. At most three in total. */
+  featured?: boolean;
 };
+
+/** §5.3: a profile shows between one and three badges, chosen by the player. */
+export const MAX_FEATURED_BADGES = 3;
 
 export type AchievementCard = {
   groupKey: string;

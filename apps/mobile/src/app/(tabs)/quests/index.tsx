@@ -180,11 +180,14 @@ export default function QuestsScreen() {
       title={t("quests.title")}
     >
       <View style={styles.stack}>
+        {/* Into the ladder, not straight into conversion: §3.4 wants a screen
+            that explains what each level opens, and that screen carries the
+            convert button for anyone who came to spend. */}
         {features.levels ? (
           <LevelCard
             level={profile.level}
-            onPress={features.conversion ? () => router.push("/quests/level-up" as Href) : undefined}
-            subtitle={features.conversion ? t("level.convertHint") : undefined}
+            onPress={() => router.push("/quests/levels" as Href)}
+            subtitle={features.conversion ? t("level.convertHint") : t("level.detailsLead")}
           />
         ) : null}
 

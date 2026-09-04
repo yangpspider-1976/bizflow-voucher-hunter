@@ -1,6 +1,15 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { AchievementCard, AchievementCategory } from "@bizflow/shared";
+import type {
+  AchievementCard,
+  AchievementCategory,
+  AchievementTierState,
+} from "@bizflow/shared";
+import { MAX_FEATURED_BADGES } from "@bizflow/shared";
+
+import { setFeaturedBadge } from "@/api/client";
+import { useAuth } from "@/auth/AuthContext";
+import { localeFor } from "@/lib/format";
 
 import { Icon } from "@/components/Icon";
 import { Screen } from "@/components/Screen";
@@ -8,7 +17,7 @@ import {
   useGamification,
   useGamificationFocusRefresh,
 } from "@/gamification/GamificationContext";
-import { useTranslation } from "@/i18n/LanguageContext";
+import { useLanguage, useTranslation } from "@/i18n/LanguageContext";
 import { colors, fonts, radius, spacing } from "@/theme";
 
 const CATEGORIES: Array<AchievementCategory | "all"> = [
@@ -35,10 +44,52 @@ export default function AchievementsScreen() {
   const t = useTranslation();
   const { isLoading, profile, refresh } = useGamification();
   const [category, setCategory] = useState<AchievementCategory | "all">("all");
+  const { token } = useAuth();
+  const [busyTier, setBusyTier] = useState<string | null>(null);
+  const [featureError, setFeatureError] = useState<string | null>(null);
 
   // Balances and mission progress move elsewhere in the app, so what this
   // screen shows is re-read every time it comes into view rather than once.
   useGamificationFocusRefresh();
+
+  /**
+   * Chosen badges, in the order the server holds them.
+   *
+   * Derived from the same cards the wall renders rather than tracked
+   * separately, so the strip at the top and the rings below it cannot disagree
+   * after a refresh.
+   */
+  const featured = useMemo(
+    () =>
+      (profile?.achievements ?? []).flatMap((card) =>
+        card.tiers
+          .filter((tier) => tier.featured)
+          .map((tier) => ({ card, tier })),
+      ),
+    [profile],
+  );
+
+  const onToggleFeatured = useCallback(
+    async (card: AchievementCard, tier: AchievementTierState) => {
+      if (!token || !tier.unlocked) return;
+      setBusyTier(`${card.groupKey}:${tier.tier}`);
+      setFeatureError(null);
+      try {
+        await setFeaturedBadge(
+          { groupKey: card.groupKey, tier: tier.tier, featured: !tier.featured },
+          token,
+        );
+        await refresh();
+      } catch (caught) {
+        // The cap lives on the server, so its refusal is the message worth
+        // showing rather than a guess made here.
+        setFeatureError(caught instanceof Error ? caught.message : t("achievement.featureFailed"));
+      } finally {
+        setBusyTier(null);
+      }
+    },
+    [refresh, t, token],
+  );
 
   const cards = useMemo(
     () =>
@@ -79,17 +130,55 @@ export default function AchievementsScreen() {
         ))}
       </ScrollView>
 
+      <View style={styles.featuredPanel}>
+        <Text style={styles.featuredTitle}>{t("achievement.featuredTitle")}</Text>
+        {featured.length === 0 ? (
+          <Text style={styles.featuredHint}>{t("achievement.featuredEmpty")}</Text>
+        ) : (
+          <View style={styles.featuredRow}>
+            {featured.map(({ card, tier }) => (
+              <View key={`${card.groupKey}:${tier.tier}`} style={styles.featuredChip}>
+                <View style={[styles.medal, { backgroundColor: TIER_COLOUR[tier.tier] }]}>
+                  <Icon color={colors.surface} name="award" size={13} />
+                </View>
+                <Text numberOfLines={1} style={styles.featuredName}>
+                  {card.title}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        <Text style={styles.featuredHint}>
+          {t("achievement.featuredHowTo", { max: MAX_FEATURED_BADGES })}
+        </Text>
+        {featureError ? <Text style={styles.featureError}>{featureError}</Text> : null}
+      </View>
+
       <View style={styles.stack}>
         {cards.map((card) => (
-          <AchievementRow card={card} key={card.groupKey} />
+          <AchievementRow
+            busyTier={busyTier}
+            card={card}
+            key={card.groupKey}
+            onToggleFeatured={onToggleFeatured}
+          />
         ))}
       </View>
     </Screen>
   );
 }
 
-function AchievementRow({ card }: { card: AchievementCard }) {
+function AchievementRow({
+  card,
+  busyTier,
+  onToggleFeatured,
+}: {
+  card: AchievementCard;
+  busyTier: string | null;
+  onToggleFeatured: (card: AchievementCard, tier: AchievementTierState) => void;
+}) {
   const t = useTranslation();
+  const { language } = useLanguage();
   const next = card.nextTier;
   const share = next ? Math.min(1, card.progress / next.threshold) : 1;
 
@@ -98,13 +187,26 @@ function AchievementRow({ card }: { card: AchievementCard }) {
       <View style={styles.cardHeader}>
         <View style={styles.medals}>
           {card.tiers.map((tier) => (
-            <View
+            <Pressable
+              accessibilityLabel={
+                tier.unlocked
+                  ? t(tier.featured ? "achievement.unfeature" : "achievement.feature")
+                  : undefined
+              }
+              accessibilityRole={tier.unlocked ? "button" : undefined}
+              disabled={!tier.unlocked || busyTier === `${card.groupKey}:${tier.tier}`}
               key={tier.tier}
-              style={[
+              onPress={() => onToggleFeatured(card, tier)}
+              style={({ pressed }) => [
                 styles.medal,
                 {
                   backgroundColor: tier.unlocked ? TIER_COLOUR[tier.tier] : colors.borderSoft,
                 },
+                // The chosen ones wear a ring rather than a different colour:
+                // the tier colour is the badge's identity and swapping it to
+                // say "featured" would make Gold stop looking like Gold.
+                tier.featured && styles.medalFeatured,
+                pressed && styles.pressed,
               ]}
             >
               <Icon
@@ -112,7 +214,7 @@ function AchievementRow({ card }: { card: AchievementCard }) {
                 name={tier.unlocked ? "award" : "lock"}
                 size={13}
               />
-            </View>
+            </Pressable>
           ))}
         </View>
         <Text style={styles.count}>
@@ -136,11 +238,108 @@ function AchievementRow({ card }: { card: AchievementCard }) {
             })
           : t("achievement.allTiers")}
       </Text>
+
+      {/* §5.3's "historical completion dates": when each tier was earned, which
+          is the part of a badge wall people actually reminisce over. */}
+      {card.tiers.some((tier) => tier.unlockedAt) ? (
+        <View style={styles.history}>
+          {card.tiers
+            .filter((tier) => tier.unlockedAt)
+            .map((tier) => (
+              <View key={tier.tier} style={styles.historyRow}>
+                <Text style={styles.historyTier}>
+                  {t(`achievement.tier.${tier.tier}` as never)}
+                </Text>
+                <Text style={styles.historyDate}>
+                  {new Date(tier.unlockedAt!).toLocaleDateString(localeFor(language), {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </Text>
+              </View>
+            ))}
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  featuredPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+  },
+  featuredTitle: {
+    color: colors.ink,
+    fontFamily: fonts.semibold,
+    fontSize: 15,
+  },
+  featuredRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  featuredChip: {
+    alignItems: "center",
+    backgroundColor: colors.page,
+    borderRadius: radius.pill,
+    flexDirection: "row",
+    gap: spacing.xs,
+    maxWidth: "100%",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  featuredName: {
+    color: colors.ink,
+    flexShrink: 1,
+    fontFamily: fonts.semibold,
+    fontSize: 13,
+  },
+  featuredHint: {
+    color: colors.textMuted,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  featureError: {
+    color: colors.danger,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+  },
+  medalFeatured: {
+    borderColor: colors.ink,
+    borderWidth: 2,
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  history: {
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: 1,
+    gap: 2,
+    marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+  },
+  historyRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  historyTier: {
+    color: colors.textMuted,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+  },
+  historyDate: {
+    color: colors.textMuted,
+    fontFamily: fonts.semibold,
+    fontSize: 12,
+  },
   filterStrip: {
     marginBottom: spacing.lg,
     marginHorizontal: -spacing.xl,

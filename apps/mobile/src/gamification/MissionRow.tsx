@@ -39,6 +39,12 @@ export function MissionRow({
   const done = mission.state === "CLAIMED";
   const claimable = mission.state === "CLAIMABLE";
   const verifying = mission.state === "VERIFYING";
+  // §11 Near Completion, in-app. Only at exactly one step left, and only while
+  // there is still something to do — the requirements ask for a nudge and
+  // explicitly warn off pressure messaging, so this is a quiet line rather than
+  // a countdown or a colour change.
+  const oneToGo =
+    !done && !claimable && !verifying && mission.target > 1 && mission.target - mission.progress === 1;
   // A window mission outside its hours is not failed, just not now. Saying so
   // is the difference between "come back at lunch" and "this is broken".
   const asleep = !mission.windowOpen && !done && !claimable;
@@ -128,6 +134,8 @@ export function MissionRow({
             </Text>
           ) : null}
         </View>
+
+        {oneToGo ? <Text style={styles.oneToGo}>{t("mission.oneToGo")}</Text> : null}
 
         {verifying ? (
           <Text style={styles.asleep}>
@@ -246,6 +254,11 @@ const styles = StyleSheet.create({
   reward: {
     color: colors.primary,
     fontFamily: fonts.bold,
+    fontSize: 12,
+  },
+  oneToGo: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
     fontSize: 12,
   },
   progress: {

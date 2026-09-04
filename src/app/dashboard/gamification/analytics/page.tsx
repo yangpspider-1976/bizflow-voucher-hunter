@@ -15,6 +15,9 @@ export const maxDuration = 60;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
+/** One stage of a funnel against the one before it; a dash when there is no base. */
+const share = (value: number, base: number) => (base === 0 ? "—" : percent(value / base));
+
 /**
  * The KPI dashboard: §13's eight areas on one screen.
  *
@@ -199,6 +202,187 @@ export default async function GamificationAnalyticsPage({
                 {centavosToLoyaltyPoints(kpis.economy.reversedLpCentavos)}
               </td>
             </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="panel">
+        <h2>Vouchers</h2>
+        <p className="muted">
+          The hunt&rarr;select&rarr;booking&rarr;QR funnel. Each stage counts what
+          happened inside the window on its own timestamp, so a voucher won in one
+          month and redeemed in the next is counted where the settlement counts it
+          rather than dragged back to the hunt that produced it.
+        </p>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Count</th>
+              <th>Of previous stage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Hunted</td>
+              <td>{kpis.vouchers.funnel.hunted.toLocaleString()}</td>
+              <td>&mdash;</td>
+            </tr>
+            <tr>
+              <td>Voucher selected</td>
+              <td>{kpis.vouchers.funnel.selected.toLocaleString()}</td>
+              <td>{share(kpis.vouchers.funnel.selected, kpis.vouchers.funnel.hunted)}</td>
+            </tr>
+            <tr>
+              <td>Booked</td>
+              <td>{kpis.vouchers.funnel.booked.toLocaleString()}</td>
+              <td>{share(kpis.vouchers.funnel.booked, kpis.vouchers.funnel.selected)}</td>
+            </tr>
+            <tr>
+              <td>Redeemed at the counter</td>
+              <td>{kpis.vouchers.funnel.redeemed.toLocaleString()}</td>
+              <td>{share(kpis.vouchers.funnel.redeemed, kpis.vouchers.funnel.booked)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Level-gated offers</h3>
+        <p className="muted">
+          Whether the restrictions partners write are actually being taken up.{" "}
+          {kpis.vouchers.levelOffers.gatedCampaigns.toLocaleString()} campaign
+          {kpis.vouchers.levelOffers.gatedCampaigns === 1 ? " carries" : "s carry"} a
+          level rule, {kpis.vouchers.levelOffers.exclusiveCampaigns.toLocaleString()} of
+          them hidden from anyone below the bar.
+        </p>
+        <table className="data-table">
+          <tbody>
+            <tr>
+              <td>Vouchers won on a gated offer</td>
+              <td>
+                {kpis.vouchers.levelOffers.selectedOnGated.toLocaleString()} ·{" "}
+                {percent(kpis.vouchers.levelOffers.shareOfSelected)} of all
+              </td>
+            </tr>
+            <tr>
+              <td>Redeemed from those</td>
+              <td>
+                {kpis.vouchers.levelOffers.redeemedOnGated.toLocaleString()} ·{" "}
+                {share(
+                  kpis.vouchers.levelOffers.redeemedOnGated,
+                  kpis.vouchers.levelOffers.selectedOnGated,
+                )}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <div className="admin-grid">
+        <section className="panel span-6">
+          <h2>Vouchers by level</h2>
+          <p className="muted">
+            The hunter&rsquo;s level <em>now</em>, not at the moment of the hunt &mdash;
+            nothing snapshots a level onto an attempt, so a player promoted mid-window
+            counts entirely at their new level.
+          </p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Level</th>
+                <th>Won</th>
+                <th>Redeemed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kpis.vouchers.byLevel.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    No vouchers in this window.
+                  </td>
+                </tr>
+              ) : (
+                kpis.vouchers.byLevel.map((row) => (
+                  <tr key={row.level}>
+                    <td>
+                      Lv.{row.level} {row.name}
+                    </td>
+                    <td>{row.selected.toLocaleString()}</td>
+                    <td>
+                      {row.redeemed.toLocaleString()} · {share(row.redeemed, row.selected)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="panel span-6">
+          <h2>Vouchers by discount band</h2>
+          <p className="muted">
+            Twenty-point bands for percentage discounts; everything else is grouped by
+            the kind of benefit it is, because a free item is a category a partner
+            reasons about rather than a discount of zero.
+          </p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Band</th>
+                <th>Won</th>
+                <th>Redeemed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kpis.vouchers.byDiscountBand.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    No vouchers in this window.
+                  </td>
+                </tr>
+              ) : (
+                kpis.vouchers.byDiscountBand.map((row) => (
+                  <tr key={row.band}>
+                    <td>{row.band}</td>
+                    <td>{row.selected.toLocaleString()}</td>
+                    <td>
+                      {row.redeemed.toLocaleString()} · {share(row.redeemed, row.selected)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <section className="panel">
+        <h2>Vouchers by partner</h2>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Partner</th>
+              <th>Won</th>
+              <th>Redeemed</th>
+              <th>Redemption rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {kpis.vouchers.byPartner.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="muted">
+                  No vouchers in this window.
+                </td>
+              </tr>
+            ) : (
+              kpis.vouchers.byPartner.map((row) => (
+                <tr key={row.partnerId}>
+                  <td>{row.partnerName}</td>
+                  <td>{row.selected.toLocaleString()}</td>
+                  <td>{row.redeemed.toLocaleString()}</td>
+                  <td>{share(row.redeemed, row.selected)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </section>

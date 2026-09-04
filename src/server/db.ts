@@ -1181,6 +1181,11 @@ async function ensureGamificationSchema(c: Client) {
     // Null means "open now", which is what every campaign did before this
     // existed. A level's head start is measured back from this instant.
     ["campaigns", "early_access_at", "TEXT"],
+    // A badge the player chose to show on their profile. Null is every badge
+    // that has not been chosen, which is what all of them were before this.
+    // Living on the unlock row rather than in a list of its own means only an
+    // unlocked, unrevoked badge can be featured, without a check to forget.
+    ["user_achievements", "featured_at", "TEXT"],
     ["push_devices", "missions_enabled", "INTEGER NOT NULL DEFAULT 1"],
     // Urgent missions are marketing, and the requirements are explicit that they
     // honour marketing consent separately from transactional notifications.

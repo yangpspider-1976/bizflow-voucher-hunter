@@ -4,7 +4,7 @@ import {
   isCoordinate,
   isSelectableAttempt,
 } from "@bizflow/shared";
-import { useFocusEffect, useRouter } from "expo-router";
+import { type Href, useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -377,11 +377,26 @@ export default function CampaignLandingScreen() {
               <View style={styles.noticeIcon}>
                 <Icon name="info" size={16} />
               </View>
-              <Text style={styles.noticeText}>
-                {locked
-                  ? offerLockLabel(t, levelGate, localeFor(language))
-                  : availabilityNotice(t, availability)}
-              </Text>
+              <View style={styles.noticeBody}>
+                <Text style={styles.noticeText}>
+                  {locked
+                    ? offerLockLabel(t, levelGate, localeFor(language))
+                    : availabilityNotice(t, availability)}
+                </Text>
+                {/* §3.4 asks a locked offer to link to the way out of being
+                    locked, not just to name the bar. Without this the notice is
+                    a dead end that tells a player the rule and nothing about
+                    how to pass it. */}
+                {locked ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => router.push("/quests/levels" as Href)}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                  >
+                    <Text style={styles.noticeLink}>{t("level.howToUnlock")}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           ) : null}
 
@@ -959,6 +974,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: 1,
     width: 20,
+  },
+  noticeBody: {
+    flex: 1,
+    gap: 4,
+  },
+  noticeLink: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
+    fontSize: 13,
   },
   noticeText: {
     color: colors.textMuted,

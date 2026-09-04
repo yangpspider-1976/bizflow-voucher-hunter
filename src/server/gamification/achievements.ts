@@ -16,9 +16,10 @@
  * to set.
  */
 import type { AchievementTier, AchievementUnlockNotice, RewardLine } from "@bizflow/shared";
-import { ACHIEVEMENT_TIERS } from "@bizflow/shared";
+import { ACHIEVEMENT_TIERS, MAX_FEATURED_BADGES } from "@bizflow/shared";
 import crypto from "node:crypto";
-import { all, one, run, type Exec } from "@/server/db";
+import { all, one, run, withTx, type Exec } from "@/server/db";
+import { AppError } from "@/server/errors";
 import { parseRewardLines } from "./config";
 import { grantReward, summarise } from "./rewards";
 import { manilaDate, manilaDaysBetween } from "./time";
@@ -391,4 +392,93 @@ async function historicalTotals(tx: Exec, phone: string, walletId: string) {
       .map((row) => String(row.business_id))
       .filter((value) => value && value !== "null"),
   };
+}
+
+/**
+ * The badges a player has chosen to show on their profile.
+ *
+ * §5.3 asks for one to three. The cap is enforced here rather than in the app
+ * because the app is not the authority on anything, and a client that lost
+ * track of what it had already featured would otherwise write a fourth.
+ *
+ * Ordered by when each was chosen, so the row of badges stays put as more are
+ * unlocked instead of reshuffling under the player.
+ */
+export async function featuredBadges(db: Exec, walletId: string) {
+  const rows = await all(
+    db,
+    `SELECT group_key, tier, unlocked_at, featured_at FROM user_achievements
+     WHERE wallet_id = ? AND revoked_at IS NULL AND featured_at IS NOT NULL
+     ORDER BY featured_at ASC`,
+    [walletId],
+  );
+  return rows.map((row) => ({
+    groupKey: String(row.group_key),
+    tier: String(row.tier) as AchievementTier,
+    unlockedAt: String(row.unlocked_at),
+    featuredAt: String(row.featured_at),
+  }));
+}
+
+/**
+ * Features or un-features one badge.
+ *
+ * Idempotent in both directions: featuring what is already featured keeps its
+ * original position rather than moving it to the end of the row, and clearing
+ * what is not featured is a no-op rather than an error. Both matter because
+ * this is a toggle a player taps, and a double tap on a slow connection must
+ * not be a different outcome from a single one.
+ *
+ * A revoked badge cannot be featured — the `WHERE` does that rather than a
+ * separate check, so an administrator revoking a badge that was on somebody's
+ * profile takes it off the profile too.
+ */
+export async function setBadgeFeatured(input: {
+  walletId: string;
+  groupKey: string;
+  tier: AchievementTier;
+  featured: boolean;
+}) {
+  return withTx(async (tx) => {
+    const owned = await one(
+      tx,
+      `SELECT id, featured_at FROM user_achievements
+       WHERE wallet_id = ? AND group_key = ? AND tier = ? AND revoked_at IS NULL`,
+      [input.walletId, input.groupKey, input.tier],
+    );
+    if (!owned) {
+      throw new AppError("E-NOT-ELIGIBLE", "You have not unlocked that badge", 404);
+    }
+
+    if (!input.featured) {
+      await run(tx, "UPDATE user_achievements SET featured_at = NULL WHERE id = ?", [owned.id]);
+      return { featured: await featuredBadges(tx, input.walletId) };
+    }
+
+    // Already on the profile: leave the timestamp alone so the row does not
+    // reorder itself under a player who tapped twice.
+    if (owned.featured_at) return { featured: await featuredBadges(tx, input.walletId) };
+
+    // Counted inside the transaction, so two taps racing cannot both see two
+    // and both write a third.
+    const held = await one(
+      tx,
+      `SELECT COUNT(*) AS total FROM user_achievements
+       WHERE wallet_id = ? AND revoked_at IS NULL AND featured_at IS NOT NULL`,
+      [input.walletId],
+    );
+    if (Number(held?.total ?? 0) >= MAX_FEATURED_BADGES) {
+      throw new AppError(
+        "E-ALREADY-COMPLETED",
+        `You can feature ${MAX_FEATURED_BADGES} badges. Remove one to add another.`,
+        409,
+      );
+    }
+
+    await run(tx, "UPDATE user_achievements SET featured_at = ? WHERE id = ?", [
+      isoNow(),
+      owned.id,
+    ]);
+    return { featured: await featuredBadges(tx, input.walletId) };
+  });
 }

@@ -17,6 +17,7 @@ export default function QuestsLayout() {
       }}
     >
       <Stack.Screen name="index" />
+      <Stack.Screen name="levels" />
       <Stack.Screen name="level-up" />
       <Stack.Screen name="achievements" />
       <Stack.Screen name="[missionKey]" />

@@ -492,6 +492,218 @@ export async function retentionKpis(db: Exec, range: AnalyticsRange): Promise<Re
   };
 }
 
+export type VoucherFunnel = {
+  hunted: number;
+  selected: number;
+  booked: number;
+  redeemed: number;
+};
+
+export type VoucherKpis = {
+  funnel: VoucherFunnel;
+  /**
+   * The same funnel split by the hunter's level, the discount they won, and the
+   * partner who honoured it — the three dimensions §13 names.
+   */
+  byLevel: { level: number; name: string; selected: number; redeemed: number }[];
+  byDiscountBand: { band: string; selected: number; redeemed: number }[];
+  byPartner: { partnerId: string; partnerName: string; selected: number; redeemed: number }[];
+  /** How much of the level-gated stock is actually being taken up. */
+  levelOffers: {
+    gatedCampaigns: number;
+    exclusiveCampaigns: number;
+    selectedOnGated: number;
+    redeemedOnGated: number;
+    /** Gated vouchers as a share of every voucher issued in the window. */
+    shareOfSelected: number;
+  };
+};
+
+/**
+ * §13's Voucher row: the hunt→select→booking→QR funnel, and whether the
+ * level-gated offers §3.4 lets partners write are actually being taken up.
+ *
+ * Each stage is counted on its own timestamp inside the window rather than by
+ * following one cohort forward. A voucher won on the 30th and redeemed on the
+ * 2nd belongs to the redemption count of the month it was redeemed in, which is
+ * how the partner settlement reads it — and two numbers for one fact is how a
+ * dashboard loses an argument with finance.
+ *
+ * One honest limitation, worth a line on the panel. The level dimension is the
+ * hunter's level *now*, not their level at the moment of the hunt: nothing
+ * snapshots a level onto an attempt, and inventing one here would mean writing
+ * to the hunt path to satisfy a report. A player who promoted mid-window counts
+ * entirely at their new level.
+ */
+export async function voucherKpis(db: Exec, range: AnalyticsRange): Promise<VoucherKpis> {
+  const { from, to } = boundsFor(range);
+  const { levels } = await loadLevels(db);
+
+  // Every stage reaches its partner through campaigns, so the filter is one
+  // clause used four times rather than four spellings of the same idea.
+  const partnerFilter = range.partnerId ? "AND c.business_id = ?" : "";
+  const withPartner = (...leading: string[]) =>
+    range.partnerId ? [...leading, range.partnerId] : leading;
+
+  const [hunted, selected, booked, redeemed, byLevel, byBand, byPartner, gated, gatedCounts] =
+    await Promise.all([
+      one(
+        db,
+        `SELECT COUNT(*) AS total FROM attempts a
+         JOIN campaigns c ON c.id = a.campaign_id
+         WHERE a.created_at >= ? AND a.created_at < ? ${partnerFilter}`,
+        withPartner(from, to),
+      ),
+      one(
+        db,
+        `SELECT COUNT(*) AS total FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         WHERE v.issued_at >= ? AND v.issued_at < ? ${partnerFilter}`,
+        withPartner(from, to),
+      ),
+      one(
+        db,
+        `SELECT COUNT(*) AS total FROM reservations r
+         JOIN campaigns c ON c.id = r.campaign_id
+         WHERE r.created_at >= ? AND r.created_at < ? ${partnerFilter}`,
+        withPartner(from, to),
+      ),
+      one(
+        db,
+        `SELECT COUNT(*) AS total FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         WHERE v.redeemed_at IS NOT NULL AND v.redeemed_at >= ? AND v.redeemed_at < ?
+           ${partnerFilter}`,
+        withPartner(from, to),
+      ),
+      all(
+        db,
+        `SELECT COALESCE(ul.current_level, 1) AS level,
+                COUNT(*) AS selected,
+                SUM(CASE WHEN v.redeemed_at IS NOT NULL THEN 1 ELSE 0 END) AS redeemed
+         FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         JOIN users u ON u.id = v.user_id
+         LEFT JOIN reward_wallets w ON w.phone = u.phone
+         LEFT JOIN user_levels ul ON ul.wallet_id = w.id
+         WHERE v.issued_at >= ? AND v.issued_at < ? ${partnerFilter}
+         GROUP BY COALESCE(ul.current_level, 1)
+         ORDER BY 1 ASC`,
+        withPartner(from, to),
+      ),
+      all(
+        db,
+        `SELECT v.benefit_type AS benefit_type,
+                CASE
+                  WHEN v.benefit_type <> 'discount_percent' THEN NULL
+                  WHEN NULLIF(v.benefit_value, '') IS NULL THEN NULL
+                  WHEN v.benefit_value ~ '^[0-9]+([.][0-9]+)?$'
+                    THEN WIDTH_BUCKET(v.benefit_value::numeric, 0, 100, 5)
+                  ELSE NULL
+                END AS bucket,
+                COUNT(*) AS selected,
+                SUM(CASE WHEN v.redeemed_at IS NOT NULL THEN 1 ELSE 0 END) AS redeemed
+         FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         WHERE v.issued_at >= ? AND v.issued_at < ? ${partnerFilter}
+         GROUP BY 1, 2
+         ORDER BY 1, 2`,
+        withPartner(from, to),
+      ),
+      all(
+        db,
+        `SELECT c.business_id AS partner_id,
+                MAX(b.name) AS partner_name,
+                COUNT(*) AS selected,
+                SUM(CASE WHEN v.redeemed_at IS NOT NULL THEN 1 ELSE 0 END) AS redeemed
+         FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         LEFT JOIN businesses b ON b.id = c.business_id
+         WHERE v.issued_at >= ? AND v.issued_at < ? ${partnerFilter}
+         GROUP BY c.business_id
+         ORDER BY 3 DESC`,
+        withPartner(from, to),
+      ),
+      one(
+        db,
+        `SELECT COUNT(*) AS selected,
+                SUM(CASE WHEN v.redeemed_at IS NOT NULL THEN 1 ELSE 0 END) AS redeemed
+         FROM vouchers v
+         JOIN campaigns c ON c.id = v.campaign_id
+         WHERE v.issued_at >= ? AND v.issued_at < ?
+           AND (c.min_user_level > 1 OR c.level_exclusive = 1 OR c.level_quota > 0)
+           ${partnerFilter}`,
+        withPartner(from, to),
+      ),
+      one(
+        db,
+        `SELECT
+           SUM(CASE WHEN c.min_user_level > 1 OR c.level_exclusive = 1 OR c.level_quota > 0
+                    THEN 1 ELSE 0 END) AS gated,
+           SUM(CASE WHEN c.level_exclusive = 1 THEN 1 ELSE 0 END) AS exclusive
+         FROM campaigns c
+         WHERE 1 = 1 ${partnerFilter}`,
+        range.partnerId ? [range.partnerId] : [],
+      ),
+    ]);
+
+  const selectedTotal = Number(selected?.total ?? 0);
+  const gatedSelected = Number(gated?.selected ?? 0);
+
+  return {
+    funnel: {
+      hunted: Number(hunted?.total ?? 0),
+      selected: selectedTotal,
+      booked: Number(booked?.total ?? 0),
+      redeemed: Number(redeemed?.total ?? 0),
+    },
+    byLevel: byLevel.map((row) => {
+      const level = Number(row.level ?? 1);
+      return {
+        level,
+        name: levels.find((entry) => entry.level === level)?.name ?? "—",
+        selected: Number(row.selected ?? 0),
+        redeemed: Number(row.redeemed ?? 0),
+      };
+    }),
+    byDiscountBand: byBand.map((row) => ({
+      band: discountBandLabel(String(row.benefit_type ?? ""), row.bucket),
+      selected: Number(row.selected ?? 0),
+      redeemed: Number(row.redeemed ?? 0),
+    })),
+    byPartner: byPartner.map((row) => ({
+      partnerId: String(row.partner_id ?? ""),
+      partnerName: String(row.partner_name ?? row.partner_id ?? ""),
+      selected: Number(row.selected ?? 0),
+      redeemed: Number(row.redeemed ?? 0),
+    })),
+    levelOffers: {
+      gatedCampaigns: Number(gatedCounts?.gated ?? 0),
+      exclusiveCampaigns: Number(gatedCounts?.exclusive ?? 0),
+      selectedOnGated: gatedSelected,
+      redeemedOnGated: Number(gated?.redeemed ?? 0),
+      shareOfSelected: selectedTotal === 0 ? 0 : gatedSelected / selectedTotal,
+    },
+  };
+}
+
+/**
+ * A readable name for one discount bucket.
+ *
+ * `WIDTH_BUCKET(value, 0, 100, 5)` gives five twenty-point bands, so bucket 1
+ * is 1-20% and bucket 5 is 81-100%; a value at or above 100 lands in the
+ * overflow bucket 6 and is folded back into the top band. A benefit that is not
+ * a percentage has no band and is labelled by its kind instead, because "free
+ * item" is a category a partner reasons about, not a discount of zero.
+ */
+function discountBandLabel(benefitType: string, bucket: unknown): string {
+  if (benefitType !== "discount_percent") return benefitType || "unknown";
+  const index = Number(bucket ?? 0);
+  if (!Number.isFinite(index) || index <= 0) return "discount_percent";
+  const top = Math.min(5, index);
+  return `${(top - 1) * 20 + 1}-${top * 20}%`;
+}
+
 export type GamificationKpis = {
   range: AnalyticsRange;
   engagement: EngagementKpis;
@@ -499,6 +711,7 @@ export type GamificationKpis = {
   levels: LevelKpis;
   achievements: AchievementKpis;
   economy: EconomyKpis;
+  vouchers: VoucherKpis;
   risk: RiskKpis;
   retention: RetentionKpis;
 };
@@ -506,17 +719,20 @@ export type GamificationKpis = {
 /** Everything the dashboard renders, in one pass. */
 export async function gamificationKpis(range: AnalyticsRange): Promise<GamificationKpis> {
   const db = await getDb();
-  const [engagement, missions, levels, achievements, economy, risk, retention] =
+  const [engagement, missions, levels, achievements, economy, vouchers, risk, retention] =
     await Promise.all([
       engagementKpis(db, range),
       missionFunnel(db, range),
       levelKpis(db, range),
       achievementKpis(db, range),
       economyKpis(db, range),
+      voucherKpis(db, range),
       riskKpis(db, range),
       retentionKpis(db, range),
     ]);
-  return { range, engagement, missions, levels, achievements, economy, risk, retention };
+  return {
+    range, engagement, missions, levels, achievements, economy, vouchers, risk, retention,
+  };
 }
 
 /**

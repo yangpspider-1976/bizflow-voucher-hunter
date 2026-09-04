@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getDb, one, resetDb } from "@/server/db";
-import { markUnlocksSeen } from "@/server/gamification/achievements";
+import { getDb, one, resetDb, run } from "@/server/db";
+import {
+  featuredBadges,
+  markUnlocksSeen,
+  setBadgeFeatured,
+} from "@/server/gamification/achievements";
 import { runBackfillToCompletion, startBackfill } from "@/server/gamification/backfill";
 import { ingestEvent } from "@/server/gamification/events";
 import { gamificationProfile } from "@/server/gamification/profile";
@@ -212,5 +216,135 @@ describe("achievement backfill", () => {
 
     expect(afterSecond?.progress).toBe(afterFirst?.progress);
     expect(afterSecond?.unlockedTiers).toBe(afterFirst?.unlockedTiers);
+  });
+});
+
+/**
+ * §5.3's "select 1-3 featured badges".
+ *
+ * The cap and the eligibility rule live on the server because the app is not
+ * the authority on either, so these are the tests that matter: a fourth badge
+ * refused, a locked badge refused, a revoked badge falling off the profile on
+ * its own, and a double tap not reordering the row.
+ */
+describe("featured badges", () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  /** Unlocks Bronze on four different groups, so there are four to choose from. */
+  async function unlockFour() {
+    await qrRedeem("f1", restaurant); // voucher_user Bronze
+    await ingestEvent({
+      eventName: "hunt_complete",
+      phone,
+      source: "test",
+      objectId: "att_f1",
+      idempotencyKey: "hunt_complete:att_f1",
+    });
+    await ingestEvent({
+      eventName: "review_verified",
+      phone,
+      source: "test",
+      objectId: "rev_f1",
+      idempotencyKey: "review_verified:rev_f1",
+    });
+    await ingestEvent({
+      eventName: "referral_verified",
+      phone,
+      source: "test",
+      objectId: "ref_f1",
+      idempotencyKey: "referral_verified:ref_f1",
+    });
+    return (await ensureRewardWallet(await getDb(), { phone })).id;
+  }
+
+  it("features a badge and reports it back on the card", async () => {
+    const walletId = await unlockFour();
+
+    const result = await setBadgeFeatured({
+      walletId,
+      groupKey: "voucher_user",
+      tier: "Bronze",
+      featured: true,
+    });
+    expect(result.featured).toHaveLength(1);
+
+    const shown = await card("voucher_user");
+    expect(shown?.tiers.find((tier) => tier.tier === "Bronze")?.featured).toBe(true);
+    // The others are untouched rather than defaulted to featured.
+    const other = await card("hunt_master");
+    expect(other?.tiers.find((tier) => tier.tier === "Bronze")?.featured).toBeFalsy();
+  });
+
+  it("refuses a fourth badge and keeps the three already chosen", async () => {
+    const walletId = await unlockFour();
+    for (const groupKey of ["voucher_user", "hunt_master", "reviewer"]) {
+      await setBadgeFeatured({ walletId, groupKey, tier: "Bronze", featured: true });
+    }
+
+    await expect(
+      setBadgeFeatured({ walletId, groupKey: "connector", tier: "Bronze", featured: true }),
+    ).rejects.toMatchObject({ code: "E-ALREADY-COMPLETED" });
+
+    expect(await featuredBadges(await getDb(), walletId)).toHaveLength(3);
+  });
+
+  it("refuses a badge the player has not unlocked", async () => {
+    const walletId = await unlockFour();
+    await expect(
+      setBadgeFeatured({ walletId, groupKey: "voucher_user", tier: "Royal", featured: true }),
+    ).rejects.toMatchObject({ code: "E-NOT-ELIGIBLE" });
+  });
+
+  it("keeps its place when the same badge is tapped twice", async () => {
+    const walletId = await unlockFour();
+    const first = await setBadgeFeatured({
+      walletId,
+      groupKey: "voucher_user",
+      tier: "Bronze",
+      featured: true,
+    });
+    await setBadgeFeatured({ walletId, groupKey: "hunt_master", tier: "Bronze", featured: true });
+    // A second tap on the first badge must not move it to the end of the row.
+    await setBadgeFeatured({ walletId, groupKey: "voucher_user", tier: "Bronze", featured: true });
+
+    const row = await featuredBadges(await getDb(), walletId);
+    expect(row.map((entry) => entry.groupKey)).toEqual(["voucher_user", "hunt_master"]);
+    expect(row[0]?.featuredAt).toBe(first.featured[0]?.featuredAt);
+  });
+
+  it("un-features on the second call, and says so", async () => {
+    const walletId = await unlockFour();
+    await setBadgeFeatured({ walletId, groupKey: "voucher_user", tier: "Bronze", featured: true });
+    const cleared = await setBadgeFeatured({
+      walletId,
+      groupKey: "voucher_user",
+      tier: "Bronze",
+      featured: false,
+    });
+
+    expect(cleared.featured).toHaveLength(0);
+    // Clearing what is not featured is a no-op rather than an error: the same
+    // tap arriving twice must not turn into a failure the player can see.
+    await expect(
+      setBadgeFeatured({ walletId, groupKey: "voucher_user", tier: "Bronze", featured: false }),
+    ).resolves.toMatchObject({ featured: [] });
+  });
+
+  it("drops a revoked badge off the profile without being asked", async () => {
+    const walletId = await unlockFour();
+    await setBadgeFeatured({ walletId, groupKey: "voucher_user", tier: "Bronze", featured: true });
+
+    await run(
+      await getDb(),
+      `UPDATE user_achievements SET revoked_at = ?, revoked_reason = ?
+       WHERE wallet_id = ? AND group_key = ? AND tier = ?`,
+      [new Date().toISOString(), "abuse", walletId, "voucher_user", "Bronze"],
+    );
+
+    // The revocation is the only write; nothing had to remember to tidy the
+    // profile, because the read only ever counted unrevoked rows.
+    expect(await featuredBadges(await getDb(), walletId)).toHaveLength(0);
   });
 });
