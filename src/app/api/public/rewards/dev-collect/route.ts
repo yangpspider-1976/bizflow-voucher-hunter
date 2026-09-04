@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireSignedInCustomerPhone } from "@/server/customer-auth";
 import { assertDevToolsEnabled } from "@/server/dev-tools";
 import { AppError, fail, ok } from "@/server/errors";
+import { onQrRedeemedByWallet } from "@/server/gamification/hooks";
 import { enforceRateLimit } from "@/server/rate-limit";
 import {
   listWalletPurchases,
@@ -51,6 +52,16 @@ export async function POST(request: Request) {
       // Item vouchers are all-or-nothing; the partner is billed the full price.
       amount: owned.priceCentavos / 100,
       staffName: "Dev Tools Staff",
+    });
+    // This tool stands in for the partner's scanner, so it has to raise what
+    // the scanner raises. Without it the leg it simulates looked complete while
+    // the scan mission and the visit counters saw nothing.
+    await onQrRedeemedByWallet({
+      walletId: redeemed.redemption.walletId,
+      businessId: owned.businessId,
+      objectType: "reward_voucher_redemption",
+      objectId: redeemed.redemption.id,
+      amountCentavos: redeemed.redemption.amountCentavos,
     });
     return ok({
       product: validated.product,

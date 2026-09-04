@@ -1371,7 +1371,10 @@ function assertPurchaseAmountInRange(amount: number | undefined) {
 
 export async function redeemVoucher(input: { codeOrToken: string; staffName: string; purchaseAmount?: number; note?: string }) {
   assertPurchaseAmountInRange(input.purchaseAmount);
-  let earner: { phone: string; businessId: string; voucherId: string } | undefined;
+  // Who the redemption belongs to. Named for the visit rather than the payout,
+  // because the visit is the fact: the gamification hook below wants it for
+  // every scan, and the loyalty accrual only for the ones that carried a bill.
+  let visitor: { phone: string; businessId: string; voucherId: string } | undefined;
   await withTx(async (tx) => {
     const voucher = await loadVoucherContext(tx, input.codeOrToken);
     if (voucher.status === "Redeemed") throw new AppError("E-VOUCHER-REDEEMED", "Voucher is already redeemed", 409);
@@ -1411,21 +1414,24 @@ export async function redeemVoucher(input: { codeOrToken: string; staffName: str
     );
     await addAnalytics(tx, voucher.campaignId, "voucher_redeemed", { purchaseAmount: input.purchaseAmount }, voucher.userId, voucher.slotId);
 
-    if (input.purchaseAmount && input.purchaseAmount > 0) {
-      const row = await one(
-        tx,
-        `SELECT u.phone AS phone, c.business_id AS business_id
-         FROM vouchers v JOIN users u ON u.id = v.user_id JOIN campaigns c ON c.id = v.campaign_id
-         WHERE v.id = ?`,
-        [voucher.id]
-      );
-      if (row) {
-        earner = {
-          phone: String(row.phone),
-          businessId: String(row.business_id),
-          voucherId: voucher.id
-        };
-      }
+    // Read for every redemption, not only the ones that typed a bill. The
+    // amount decides whether Loyalty Points are accrued; it does not decide
+    // whether the visit happened. Gating this lookup on it meant a checkout
+    // that left the optional field blank raised no `qr_redeem` at all, so the
+    // scan mission and every visit counter behind it never saw the visit.
+    const row = await one(
+      tx,
+      `SELECT u.phone AS phone, c.business_id AS business_id
+       FROM vouchers v JOIN users u ON u.id = v.user_id JOIN campaigns c ON c.id = v.campaign_id
+       WHERE v.id = ?`,
+      [voucher.id]
+    );
+    if (row) {
+      visitor = {
+        phone: String(row.phone),
+        businessId: String(row.business_id),
+        voucherId: voucher.id
+      };
     }
   });
 
@@ -1434,14 +1440,14 @@ export async function redeemVoucher(input: { codeOrToken: string; staffName: str
   // or the sale too small to earn a point — and none of that is a reason to
   // refuse a voucher the customer has already been served against.
   let loyalty: { awarded: boolean; amount?: string; balance?: string; reason?: string } | undefined;
-  if (earner) {
+  if (visitor && input.purchaseAmount && input.purchaseAmount > 0) {
     try {
       const credited = await awardLoyaltyPointsForRedemption({
-        phone: earner.phone,
-        businessId: earner.businessId,
-        purchaseAmount: input.purchaseAmount as number,
+        phone: visitor.phone,
+        businessId: visitor.businessId,
+        purchaseAmount: input.purchaseAmount,
         staffName: input.staffName,
-        voucherId: earner.voucherId
+        voucherId: visitor.voucherId
       });
       loyalty = credited.heldForReview
         ? { awarded: false, reason: "Held for fraud review" }
@@ -1457,12 +1463,12 @@ export async function redeemVoucher(input: { codeOrToken: string; staffName: str
   // Outside the transaction above, for the same reason the loyalty award is:
   // the rules engine opens a transaction of its own, and the redemption is
   // already committed and owed whether or not a mission noticed it.
-  if (earner) {
+  if (visitor) {
     await onQrRedeemed({
-      phone: earner.phone,
-      businessId: earner.businessId,
+      phone: visitor.phone,
+      businessId: visitor.businessId,
       objectType: "voucher",
-      objectId: earner.voucherId,
+      objectId: visitor.voucherId,
     });
   }
 

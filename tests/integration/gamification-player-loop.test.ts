@@ -263,6 +263,34 @@ describe("the player loop, through the product's own entry points", () => {
     expect(await productEventNames()).not.toContain("purchase_verified");
   });
 
+  // T2 with the optional field left alone, which is how the checkout is used
+  // when there is no bill to record — and how a tester scanning from the
+  // dashboard reaches it. Every other test in this file passes an amount, which
+  // is exactly why the scan mission could go uncredited for a blank one without
+  // a single failure: the visit lookup used to sit inside the `purchaseAmount`
+  // branch, so no amount meant no `qr_redeem` and no mission, XP or LP.
+  it("completes the scan mission when the checkout records no purchase amount", async () => {
+    const token = await issueMobileToken();
+    const attemptId = await drawOne(token, "loop-qr-blank");
+    const booked = await bookOne(token, "loop-qr-blank", attemptId);
+
+    const redeemed = await redeemVoucher({
+      codeOrToken: booked.voucher.voucherCode,
+      staffName: "Till Tester",
+    });
+
+    // No amount, so nothing accrues the 5% — that half stays gated.
+    expect(redeemed.loyalty).toBeUndefined();
+
+    const profile = await gamificationProfile({ phone });
+    expect(missionState(profile, "daily_qr_redeem")).toBe("CLAIMED");
+    // Identical to the paid redemption above: the bill funds loyalty, not the
+    // mission, so leaving it blank must not cost the player XP or LP.
+    expect(profile.level.lifetimeXp).toBe(90);
+    expect(globalLp(profile)).toBe(5_00);
+    expect(await productEventNames()).toContain("qr_redeem");
+  });
+
   // T2, the whole leg in one pass: each entry point raises exactly one event,
   // and each event is named after the fact rather than the moment, so a retry
   // of any leg describes the same thing.
