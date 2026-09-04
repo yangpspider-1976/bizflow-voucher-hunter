@@ -5,7 +5,7 @@ import { one, withReadTx } from "@/server/db";
 import { fail, ok } from "@/server/errors";
 import { loadLevels } from "@/server/gamification/config";
 import { listMissionCards } from "@/server/gamification/missions";
-import { ensureTodaysMissions, resolveWallet } from "@/server/gamification/profile";
+import { ensureTodaysMissions, featuresFor, resolveWallet } from "@/server/gamification/profile";
 import { manilaDate } from "@/server/gamification/time";
 
 const querySchema = z.object({
@@ -50,6 +50,15 @@ export async function GET(request: Request) {
     const location = locationFrom(url);
 
     const walletId = await resolveWallet(phone);
+
+    // With missions switched off for this player the board is empty rather
+    // than forbidden, and no rows are assigned. An error here would turn an
+    // operator pausing a feature into a broken screen; a board of missions
+    // that cannot progress would be worse still, because the player would do
+    // the work and never be credited. This has to agree with the profile
+    // endpoint, which already answers the same way.
+    if (!(await featuresFor(walletId)).missions) return ok([]);
+
     await ensureTodaysMissions(walletId);
 
     const cards = await withReadTx(async (tx) => {

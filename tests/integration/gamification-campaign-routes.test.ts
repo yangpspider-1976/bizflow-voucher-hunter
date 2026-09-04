@@ -36,10 +36,13 @@ import {
 import { POST as joinMissionRoute } from "@/app/api/public/gamification/missions/[missionKey]/join/route";
 import { POST as submitProofRoute } from "@/app/api/public/gamification/missions/[missionKey]/proof/route";
 import { GET as readMissionBoard } from "@/app/api/public/gamification/missions/route";
+import { GET as readAchievements } from "@/app/api/public/gamification/achievements/route";
 import { POST as verifyOtpRoute } from "@/app/api/public/signin/verify-otp/route";
 import { ADMIN_SESSION_COOKIE, createAdminSession } from "@/lib/admin-session";
 import { all, getDb, resetDb, run } from "@/server/db";
 import { requestSignInOtp } from "@/server/otp";
+import { DEFAULT_ECONOMY, loadEconomy, publishEconomy } from "@/server/gamification/config";
+import { gamificationProfile } from "@/server/gamification/profile";
 
 const phone = "+639171110204";
 const partner = "biz_demo_restaurant";
@@ -527,5 +530,131 @@ describe("submitting evidence from the app", () => {
     expect(
       await all(await getDb(), "SELECT file_ref FROM mission_proof_files"),
     ).toHaveLength(0);
+  });
+});
+
+/* Feature switches ----------------------------------------------------------- */
+
+/**
+ * §17.10: can a feature be stopped immediately?
+ *
+ * The profile endpoint has honoured the switches since they were added, but it
+ * is not the only way into missions. The board, the detail card, the join and
+ * the achievement list are separate endpoints, and a switch that stops one but
+ * not the others is not a stop — it is two endpoints disagreeing about the same
+ * flag, which is worse than no switch because the disagreement is invisible
+ * until a player acts on the half that is still open.
+ *
+ * The dividing line these assert: **exposure and entry are gated; a payout
+ * already earned is not.**
+ */
+async function switchOff(...features: Array<"missions" | "achievements">) {
+  const db = await getDb();
+  const { economy } = await loadEconomy(db);
+  const off = Object.fromEntries(
+    features.map((name) => [name, { enabled: false, rolloutPercent: 100 }]),
+  );
+  await publishEconomy(db, {
+    economy: { ...economy, features: { ...economy.features, ...off } },
+    actor: "ops@test",
+    note: "stop the feature",
+  });
+}
+
+describe("stopping a feature", () => {
+  beforeEach(async () => {
+    cookieValues.clear();
+    process.env.ADMIN_SESSION_SECRET =
+      "test-only-admin-session-secret-with-more-than-32-characters";
+    await resetDb();
+  });
+
+  it("empties the mission board instead of leaving it running beside a paused profile", async () => {
+    const token = await playerToken();
+
+    // On: the daily set is there, assigned by the first look.
+    const before = await unwrap<MissionCardRow[]>(
+      await readMissionBoard(asPlayer("http://localhost/api/public/gamification/missions", token)),
+    );
+    expect(before.length).toBeGreaterThan(0);
+
+    await switchOff("missions");
+
+    const after = await unwrap<MissionCardRow[]>(
+      await readMissionBoard(asPlayer("http://localhost/api/public/gamification/missions", token)),
+    );
+    expect(after).toHaveLength(0);
+
+    // And the two endpoints say the same thing, which is the whole point.
+    const profile = await gamificationProfile({ phone });
+    expect(profile.features.missions).toBe(false);
+    expect(profile.missions).toHaveLength(0);
+  });
+
+  it("refuses a join, because entering spends quota and partner budget", async () => {
+    await publishMission(await asOperations(MISSIONS_URL, draft()));
+    const token = await playerToken();
+    await switchOff("missions");
+
+    const response = await joinMissionRoute(
+      asPlayer(
+        "http://localhost/api/public/gamification/missions/urgent_route_lunch/join",
+        token,
+        { method: "POST", body: "{}" },
+      ),
+      { params: { missionKey: "urgent_route_lunch" } },
+    );
+
+    expect(response.status).toBe(503);
+    expect((await errorOf(response)).code).toBe("E-FEATURE-DISABLED");
+    // Nothing was written: no place taken, no budget reserved.
+    expect(
+      await all(await getDb(), "SELECT id FROM user_missions WHERE mission_key = ?", [
+        "urgent_route_lunch",
+      ]),
+    ).toHaveLength(0);
+  });
+
+  it("empties the achievement board rather than freezing it mid-progress", async () => {
+    const token = await playerToken();
+    const url = "http://localhost/api/public/gamification/achievements";
+
+    const before = await unwrap<{ achievements: unknown[] }>(
+      await readAchievements(asPlayer(url, token)),
+    );
+    expect(before.achievements.length).toBeGreaterThan(0);
+
+    await switchOff("achievements");
+
+    const after = await unwrap<{ achievements: unknown[]; unseenUnlocks: unknown[] }>(
+      await readAchievements(asPlayer(url, token)),
+    );
+    expect(after.achievements).toHaveLength(0);
+    expect(after.unseenUnlocks).toHaveLength(0);
+  });
+
+  it("gives the board back when the switch goes on again", async () => {
+    const token = await playerToken();
+    await switchOff("missions");
+    expect(
+      await unwrap<MissionCardRow[]>(
+        await readMissionBoard(
+          asPlayer("http://localhost/api/public/gamification/missions", token),
+        ),
+      ),
+    ).toHaveLength(0);
+
+    const db = await getDb();
+    const { economy } = await loadEconomy(db);
+    await publishEconomy(db, {
+      economy: { ...economy, features: DEFAULT_ECONOMY.features },
+      actor: "ops@test",
+      note: "resume",
+    });
+
+    const resumed = await unwrap<MissionCardRow[]>(
+      await readMissionBoard(asPlayer("http://localhost/api/public/gamification/missions", token)),
+    );
+    expect(resumed.length).toBeGreaterThan(0);
   });
 });

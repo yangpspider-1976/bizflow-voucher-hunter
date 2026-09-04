@@ -4,8 +4,9 @@ Answers to the ten questions in §17 of *Voucher Hunt Gamification Update*
 (v1.0, 2026-08-27), each one checked against the code rather than against the
 implementation notes in [GAMIFICATION.md](GAMIFICATION.md).
 
-Verified 2026-09-03. First pass at `8102bb5` found three questions unanswered;
-the work that closed them is described under each.
+Verified 2026-09-03, re-checked 2026-09-04. The first pass at `8102bb5` found
+three questions unanswered; the second found question 10 answered only halfway.
+The work that closed each is described under it.
 
 | | Question | Verdict |
 | :---: | --- | --- |
@@ -18,7 +19,7 @@ the work that closed them is described under each.
 | 7 | SSV, one-time QR, multi-account, duplicate, concurrency | Pass — the ad client is a deployment dependency |
 | 8 | Settlement separates mission rewards from LP→XP conversions | Pass |
 | 9 | Existing hunt→voucher→booking→QR→5% regression | **Needs a CI run** |
-| 10 | Everything stoppable and gradually rollable behind flags | Pass |
+| 10 | Everything stoppable and gradually rollable behind flags | Pass — the exposure half was added on the second pass |
 
 Nine of the ten are answered in code. §9 is the exception and cannot be answered
 from this machine: the regression suite needs a PostgreSQL instance, there is
@@ -280,6 +281,58 @@ the row is finished, because replaying later would double-count the half that
 already ran. A counter counted twice is a worse outcome than a mission that did
 not notice a redemption during an outage the operator declared.
 
+*Closed since the second pass.* The switches stopped **earning** but not
+**exposure or entry**, which is half a stop. `gamificationProfile` honoured the
+flags from the start — missions and achievements came back empty — but it is not
+the only door into either, and the others were left open:
+
+| Surface | Before | Now |
+| --- | --- | --- |
+| `GET /missions` | Full board, and it assigned today's rows | Empty, and assigns nothing |
+| `GET /missions/{key}` | The card, and it assigned today's rows | `MISSION_NOT_ACTIVE` (404) |
+| `POST /missions/{key}/join` | Joined: took a quota place, reserved partner budget | `FEATURE_DISABLED` (503) |
+| `GET /achievements` | Full board, every bar frozen where it stood | Empty |
+
+The worst of these was the disagreement rather than any one endpoint. The
+profile said `missions: false, missions: []` while the board beside it returned
+a full set the player could work through and never be credited for, because the
+rules engine had already stopped judging the events. Two endpoints disagreeing
+about one flag is worse than no flag: the disagreement is invisible until
+somebody acts on the half that is still open.
+
+The dividing line, applied deliberately rather than by which file was edited:
+
+- **Exposure and entry are gated.** Joining is entry — it takes a quota place
+  and reserves partner budget — so it is refused, and the guard sits inside
+  `joinMission` rather than in the route, where no future caller can miss it.
+- **Anything already entered runs to completion.** `claim` and `proof` stay
+  open. A player who joined while the feature was running, did the work and came
+  back to a stopped feature is owed their reward, and proof approval writes
+  `CLAIMABLE` and pays directly rather than through the rules engine, so that
+  path genuinely finishes while the engine is off.
+- **A read comes back empty, not forbidden.** A 503 on the board would turn an
+  operator pausing a feature into a broken screen. Empty is what the app already
+  knows how to draw.
+
+*And the client half, which did not exist.* `GamificationProfile.features` was
+computed, returned, and read by nobody — its own doc comment promised the app
+"uses them to decide what to draw", and no screen did. Pausing missions left the
+quests tab showing an empty board with no explanation, and the level-up screen
+took a player through picking a pot and an amount before the server refused the
+conversion. The app now reads `features` and hides what is not running: the
+level card, the mission tabs and list (replaced by a plain "paused, nothing you
+earned is affected" line), the achievements section, and the conversion entry
+point. `level-up` says the same at the door, because it is reachable by deep
+link after the entry point is gone. Copy is keyed in all four languages, and a
+server too old to send the field falls back to `ALL_FEATURES_ON` — nothing
+switched off is nothing to hide.
+
+Covered by the four `stopping a feature` cases in
+[gamification-campaign-routes.test.ts](../tests/integration/gamification-campaign-routes.test.ts),
+which assert the board empties, the two endpoints agree, a join is refused with
+nothing written, the achievement board empties, and the board comes back when
+the switch does. They need Postgres.
+
 Per-mission stopping is unchanged and still there: a definition moves to
 `Stopped` immediately, and §10.1's choice about in-flight participants is
 recorded.
@@ -290,7 +343,10 @@ recorded.
 
 1. **Run `npm run test:integration` against a real Postgres and attach the
    result.** This is the only outstanding item, and it now covers new code in
-   the hunt path.
+   the hunt path (§6) and the feature switches (§10). What ran locally after the
+   second pass: `npm run typecheck` clean, `npm run mobile:typecheck` clean,
+   `npx vitest run tests/unit` 25 files / 248 tests passed — the same four
+   files as before fail only for want of `TEST_DATABASE_URL`.
 2. Finish the rewarded-ad client — SDK, AdMob ids, `customData`, SSV callback
    URL. External dependency; nothing in this repository blocks it.
 3. Rebuild the native app: `expo-image-picker` and `expo-location` are

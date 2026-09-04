@@ -533,6 +533,16 @@ Two rules hold everywhere:
 
 - **A flag gates earning and exposure, never a payout already earned.** A
   mission finished this morning still pays when claimed this afternoon.
+  Concretely: the profile, the mission board, one mission's card and the
+  achievement list all come back empty while their feature is off, and
+  `join` — which takes a quota place and reserves partner budget — is refused
+  with `E-FEATURE-DISABLED`. `claim` and `proof` stay open, because both
+  finish something the player entered while the feature was running; proof
+  approval writes `CLAIMABLE` and pays directly rather than through the rules
+  engine, so that path completes even with the engine stopped. A read is
+  answered empty rather than 503: pausing a feature should not read as a broken
+  screen. The app reads the same flags off the profile and hides what is not
+  running, so a paused feature is an absent section rather than a dead end.
 - **Nothing is lost while a switch is off.** An event that arrives with the
   whole rules engine off is written `Deferred` rather than judged, and
   publishing an economy version — the only thing that can turn a feature back

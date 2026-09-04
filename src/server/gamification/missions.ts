@@ -37,7 +37,8 @@ import { all, one, run, withTx, type Exec } from "@/server/db";
 import { AppError } from "@/server/errors";
 import { ensureRewardWallet } from "@/server/rewards-network";
 import { bumpCounter, advanceStreak } from "./achievements";
-import { loadLevels, parseRewardLines } from "./config";
+import { loadEconomy, loadLevels, parseRewardLines } from "./config";
+import { assertFeatureEnabled } from "./flags";
 import { publishEvent } from "./events";
 import { addSummaries, EMPTY_REWARD, grantReward, summarise } from "./rewards";
 import {
@@ -959,6 +960,20 @@ export async function joinMission(input: {
 }) {
   return withTx(async (tx) => {
     const wallet = await ensureRewardWallet(tx, { phone: input.phone });
+
+    // Joining is entry, not payout, so the switch applies here. A stopped
+    // feature that still let players take quota places and reserve partner
+    // budget would not be stopped in the sense an operator means. Claim and
+    // proof are deliberately left open: they finish something this player
+    // already entered while the feature was running.
+    const { economy } = await loadEconomy(tx);
+    assertFeatureEnabled(
+      economy,
+      "missions",
+      wallet.id,
+      "Missions are paused right now. Anything you have already earned is safe.",
+    );
+
     const live = (await joinableMissionDefinitions(tx)).find(
       (definition) => definition.missionKey === input.missionKey,
     );

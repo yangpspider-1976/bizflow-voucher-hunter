@@ -1,7 +1,7 @@
 import { type Href, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import type { MissionCard } from "@bizflow/shared";
+import { ALL_FEATURES_ON, type MissionCard } from "@bizflow/shared";
 
 import { claimMission, joinMission } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -46,6 +46,15 @@ export default function QuestsScreen() {
   } = useGamification();
 
   const [tab, setTab] = useState<Tab>("DAILY");
+
+  // What is actually running for this player. The server has already applied
+  // these — a switched-off feature comes back empty — so this decides what to
+  // draw, never what to allow. A section for a paused feature is worse than no
+  // section: an empty board with no explanation reads as a bug.
+  //
+  // A server too old to send the field is a server where nothing is switched
+  // off, so the fallback is everything on.
+  const features = profile?.features ?? ALL_FEATURES_ON;
 
   // Balances and mission progress move elsewhere in the app, so what this
   // screen shows is re-read every time it comes into view rather than once.
@@ -163,99 +172,113 @@ export default function QuestsScreen() {
     <Screen
       onRefresh={refresh}
       refreshing={isLoading}
-      subtitle={t("quests.subtitle", {
-        done: doneToday,
-        total: daily.length,
-      })}
+      subtitle={
+        features.missions
+          ? t("quests.subtitle", { done: doneToday, total: daily.length })
+          : undefined
+      }
       title={t("quests.title")}
     >
       <View style={styles.stack}>
-        <LevelCard
-          level={profile.level}
-          onPress={() => router.push("/quests/level-up" as Href)}
-          subtitle={t("level.convertHint")}
-        />
+        {features.levels ? (
+          <LevelCard
+            level={profile.level}
+            onPress={features.conversion ? () => router.push("/quests/level-up" as Href) : undefined}
+            subtitle={features.conversion ? t("level.convertHint") : undefined}
+          />
+        ) : null}
 
-        <View style={styles.tabs}>
-          {(["DAILY", "URGENT"] as Tab[]).map((candidate) => (
-            <Pressable
-              accessibilityRole="button"
-              key={candidate}
-              onPress={() => setTab(candidate)}
-              style={[styles.tab, tab === candidate && styles.tabActive]}
-            >
-              <Text style={[styles.tabText, tab === candidate && styles.tabTextActive]}>
-                {candidate === "DAILY" ? t("quests.daily") : t("quests.urgent")}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {features.missions ? (
+          <>
+            <View style={styles.tabs}>
+              {(["DAILY", "URGENT"] as Tab[]).map((candidate) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={candidate}
+                  onPress={() => setTab(candidate)}
+                  style={[styles.tab, tab === candidate && styles.tabActive]}
+                >
+                  <Text style={[styles.tabText, tab === candidate && styles.tabTextActive]}>
+                    {candidate === "DAILY" ? t("quests.daily") : t("quests.urgent")}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
 
-        <View style={styles.resetRow}>
-          <Icon color={colors.textMuted} name="clock" size={13} />
-          <Text style={styles.resetText}>
-            {t("quests.resetsAt", {
-              time: new Date(profile.missionsResetAt).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            })}
-          </Text>
-        </View>
-
-        {claimError ? <Text style={styles.claimError}>{claimError}</Text> : null}
-
-        {missions.length === 0 ? (
-          <View style={styles.empty}>
-            <Icon color={colors.textMuted} name="coffee" size={22} />
-            <Text style={styles.emptyText}>
-              {tab === "DAILY" ? t("quests.emptyDaily") : t("quests.emptyUrgent")}
-            </Text>
-          </View>
-        ) : (
-          missions.map((mission) => (
-            <MissionRow
-              claiming={claimingKey === mission.missionKey}
-              joining={joiningKey === mission.missionKey}
-              key={`${mission.missionKey}:${mission.definitionVersion}`}
-              mission={mission}
-              onClaim={onClaim}
-              onJoin={onJoin}
-              onOpen={onOpen}
-            />
-          ))
-        )}
-
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.push("/quests/achievements" as Href)}
-          style={({ pressed }) => [styles.achievements, pressed && styles.pressed]}
-        >
-          <View style={styles.achievementsHeader}>
-            <Text style={styles.sectionTitle}>{t("quests.achievements")}</Text>
-            <Icon color={colors.textMuted} name="chevron-right" size={18} />
-          </View>
-          <Text style={styles.sectionMeta}>
-            {t("achievement.unlockedCount", {
-              count: profile.achievements.reduce(
-                (total, card) => total + card.unlockedTiers,
-                0,
-              ),
-              total: profile.achievements.reduce(
-                (total, card) => total + card.tiers.length,
-                0,
-              ),
-            })}
-          </Text>
-          {nextUp.map((card) => (
-            <View key={card.groupKey} style={styles.nextRow}>
-              <Text style={styles.nextTitle}>{card.title}</Text>
-              <Text style={styles.nextProgress}>
-                {card.progress}/{card.nextTier!.threshold}
+            <View style={styles.resetRow}>
+              <Icon color={colors.textMuted} name="clock" size={13} />
+              <Text style={styles.resetText}>
+                {t("quests.resetsAt", {
+                  time: new Date(profile.missionsResetAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                })}
               </Text>
             </View>
-          ))}
-        </Pressable>
+
+            {claimError ? <Text style={styles.claimError}>{claimError}</Text> : null}
+
+            {missions.length === 0 ? (
+              <View style={styles.empty}>
+                <Icon color={colors.textMuted} name="coffee" size={22} />
+                <Text style={styles.emptyText}>
+                  {tab === "DAILY" ? t("quests.emptyDaily") : t("quests.emptyUrgent")}
+                </Text>
+              </View>
+            ) : (
+              missions.map((mission) => (
+                <MissionRow
+                  claiming={claimingKey === mission.missionKey}
+                  joining={joiningKey === mission.missionKey}
+                  key={`${mission.missionKey}:${mission.definitionVersion}`}
+                  mission={mission}
+                  onClaim={onClaim}
+                  onJoin={onJoin}
+                  onOpen={onOpen}
+                />
+              ))
+            )}
+          </>
+        ) : (
+          <View style={styles.empty}>
+            <Icon color={colors.textMuted} name="coffee" size={22} />
+            <Text style={styles.emptyText}>{t("quests.missionsPaused")}</Text>
+          </View>
+        )}
+
+        {features.achievements ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push("/quests/achievements" as Href)}
+            style={({ pressed }) => [styles.achievements, pressed && styles.pressed]}
+          >
+            <View style={styles.achievementsHeader}>
+              <Text style={styles.sectionTitle}>{t("quests.achievements")}</Text>
+              <Icon color={colors.textMuted} name="chevron-right" size={18} />
+            </View>
+            <Text style={styles.sectionMeta}>
+              {t("achievement.unlockedCount", {
+                count: profile.achievements.reduce(
+                  (total, card) => total + card.unlockedTiers,
+                  0,
+                ),
+                total: profile.achievements.reduce(
+                  (total, card) => total + card.tiers.length,
+                  0,
+                ),
+              })}
+            </Text>
+            {nextUp.map((card) => (
+              <View key={card.groupKey} style={styles.nextRow}>
+                <Text style={styles.nextTitle}>{card.title}</Text>
+                <Text style={styles.nextProgress}>
+                  {card.progress}/{card.nextTier!.threshold}
+                </Text>
+              </View>
+            ))}
+          </Pressable>
+        ) : null}
       </View>
 
       <UnlockCelebration notice={celebrating} onDismiss={dismissCelebration} />

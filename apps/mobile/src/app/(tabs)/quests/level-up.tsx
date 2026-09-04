@@ -1,7 +1,7 @@
 import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import type { ConvertibleWallet } from "@bizflow/shared";
+import { ALL_FEATURES_ON, type ConvertibleWallet } from "@bizflow/shared";
 
 import { convertPointsToXp } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
@@ -100,6 +100,20 @@ export default function LevelUpScreen() {
   }, [idempotencyKey, lp, refresh, router, selected, t, token]);
 
   if (!profile || !conversion) return null;
+
+  // Reachable by deep link even once the quests screen stops offering it, so
+  // the paused state is said here too. Better to be told at the door than
+  // after picking a pot and an amount and tapping convert.
+  if (!(profile.features ?? ALL_FEATURES_ON).conversion) {
+    return (
+      <Screen title={t("level.upTitle")}>
+        <View style={styles.stack}>
+          <LevelCard level={profile.level} />
+          <Text style={styles.pausedNote}>{t("level.conversionPaused")}</Text>
+        </View>
+      </Screen>
+    );
+  }
 
   if (confirming && selected) {
     return (
@@ -237,6 +251,13 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  pausedNote: {
+    color: colors.textMuted,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+  },
   stack: {
     gap: spacing.md,
   },

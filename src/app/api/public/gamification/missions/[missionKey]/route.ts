@@ -5,7 +5,7 @@ import { one, withReadTx } from "@/server/db";
 import { AppError, fail, ok } from "@/server/errors";
 import { loadLevels } from "@/server/gamification/config";
 import { listMissionCards } from "@/server/gamification/missions";
-import { ensureTodaysMissions, resolveWallet } from "@/server/gamification/profile";
+import { ensureTodaysMissions, featuresFor, resolveWallet } from "@/server/gamification/profile";
 import { manilaDate } from "@/server/gamification/time";
 
 const paramsSchema = z.object({ missionKey: z.string().min(1).max(64) });
@@ -45,6 +45,13 @@ export async function GET(
     const location = locationFrom(new URL(request.url));
 
     const walletId = await resolveWallet(phone);
+
+    // Paused missions are missions this player does not have, which is the
+    // answer the board gives and the one the app already knows how to draw.
+    if (!(await featuresFor(walletId)).missions) {
+      throw new AppError("E-MISSION-NOT-ACTIVE", "That mission is not available to you", 404);
+    }
+
     await ensureTodaysMissions(walletId);
 
     const card = await withReadTx(async (tx) => {
