@@ -1,4 +1,5 @@
 import { rewardsNetworkOverview } from "@/server/rewards-network";
+import { formatDateTime } from "@/lib/datetime-display";
 import { HeldPurchaseActions, SettlementRowActions } from "../_components/RewardsAdminActions";
 import { RewardsStaffTools } from "../_components/RewardsStaffTools";
 import { cachedBusinesses, currentSession } from "@/server/dashboard-data";
@@ -90,7 +91,7 @@ export default async function RewardsNetworkPage() {
               ) : (
                 overview.purchases.map((purchase) => (
                   <tr key={purchase.id}>
-                    <td>{new Date(purchase.createdAt).toLocaleString()}</td>
+                    <td>{formatDateTime(purchase.createdAt)}</td>
                     <td>{purchase.maskedPhone}</td>
                     <td>{purchase.businessName}</td>
                     <td>{purchase.purchaseAmount}</td>
@@ -142,7 +143,7 @@ export default async function RewardsNetworkPage() {
               ) : (
                 overview.redemptions.map((redemption) => (
                   <tr key={redemption.id}>
-                    <td>{new Date(redemption.createdAt).toLocaleString()}</td>
+                    <td>{formatDateTime(redemption.createdAt)}</td>
                     <td>{redemption.maskedPhone}</td>
                     <td>{redemption.voucherCode}</td>
                     <td>{redemption.businessName}</td>

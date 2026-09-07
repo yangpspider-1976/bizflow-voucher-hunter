@@ -1,33 +1,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { FiArrowLeft } from "react-icons/fi";
+import { formatDate, formatDateTime } from "@/lib/datetime-display";
 import { formatLoyaltyPoints, partnerBalanceTotal } from "@/lib/loyalty-display";
 import { toDisplayPhone } from "@/lib/phone-display";
 import { AppError } from "@/server/errors";
 import { getCustomer } from "@/server/customers";
 import { currentSession } from "@/server/dashboard-data";
-
-function formatDateTime(value?: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("en-PH", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-}
-
-function formatDate(value?: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
-}
 
 /** Redeemed reads as success; terminal-but-unused reads as a problem. */
 function statusBadge(status: string) {

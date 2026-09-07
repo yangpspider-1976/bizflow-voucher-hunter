@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { FiEdit2 } from "react-icons/fi";
+import { formatDate as formatDateOnly } from "@/lib/datetime-display";
 import { cachedBusinesses, currentSession } from "@/server/dashboard-data";
 import { listAdminUsers } from "@/server/admin-users";
 import { listBusinesses } from "@/server/admin";
@@ -17,12 +18,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 function formatDate(value?: string) {
-  if (!value) return null;
-  return new Date(value).toLocaleDateString("en-PH", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return value ? formatDateOnly(value) : null;
 }
 
 /**

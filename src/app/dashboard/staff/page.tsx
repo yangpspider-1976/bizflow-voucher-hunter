@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { formatDateTime } from "@/lib/datetime-display";
 import { useEffect, useRef, useState } from "react";
 import {
   FiAlertTriangle,
@@ -76,7 +77,7 @@ const statusPresentation: Record<Voucher["status"], { label: string; tone: "succ
 function statusExplanation(validation: Validation) {
   switch (validation.voucher.status) {
     case "Expired":
-      return `This voucher expired on ${new Date(validation.voucher.expiresAt).toLocaleString()} and can no longer be redeemed.`;
+      return `This voucher expired on ${formatDateTime(validation.voucher.expiresAt)} and can no longer be redeemed.`;
     case "Redeemed":
       return "This voucher has already been redeemed and cannot be used again.";
     case "Cancelled":
@@ -641,7 +642,7 @@ export default function StaffPage() {
                   </span>
                   <div>
                     <strong>Expires</strong>
-                    <p className="muted">{new Date(result.voucher.expiresAt).toLocaleString()}</p>
+                    <p className="muted">{formatDateTime(result.voucher.expiresAt)}</p>
                   </div>
                 </div>
               </div>

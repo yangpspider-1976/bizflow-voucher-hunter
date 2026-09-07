@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isTransactionKind, transactionKindLabel } from "@/lib/transaction-kinds";
+import { formatDateTime } from "@/lib/datetime-display";
 import { toDisplayPhone } from "@/lib/phone-display";
 import { cachedBusinesses, currentSession } from "@/server/dashboard-data";
 import { centavosToLoyaltyPoints, centavosToMoney } from "@/server/rewards-network";
@@ -11,20 +12,6 @@ import { TransactionFilters } from "../_components/TransactionFilters";
 // show an operator a list that is missing the sale they just rang up.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("en-PH", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: "Asia/Manila",
-      });
-}
 
 /**
  * Held and rejected awards, and unsettled LP, are the rows an operator is

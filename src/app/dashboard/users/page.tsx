@@ -1,18 +1,12 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { currentSession } from "@/server/dashboard-data";
+import { formatDate } from "@/lib/datetime-display";
 import { formatLoyaltyPoints, partnerBalanceTotal } from "@/lib/loyalty-display";
 import { toDisplayPhone } from "@/lib/phone-display";
 import { listCustomers, type CustomerSummary } from "@/server/customers";
 import { CustomerSearch } from "../_components/CustomerSearch";
 import { ClickableCustomerRow } from "./ClickableCustomerRow";
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
-}
 
 /** Everything a customer holds: the global pot plus every partner bucket. */
 function loyaltyTotalCentavos(customer: CustomerSummary) {
