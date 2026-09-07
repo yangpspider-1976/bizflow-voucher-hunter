@@ -15,10 +15,17 @@ missions cannot be completed**. That is the gap these steps close.
 
 ## Step 2 — Create the AdMob app and rewarded ad units
 
-1. Sign in at [apps.admob.com](https://apps.admob.com) with the Google account
-   that should own the ad revenue. This is a monetisation account and is
+1. Sign in at **[admob.google.com](https://admob.google.com)** with the Google
+   account that should own the ad revenue. This is a monetisation account and is
    separate from the Play Console login, though the same Google account can hold
    both.
+
+   > Not `apps.admob.com`. That host is dead — it resolves to `0.0.0.0` from
+   > every public resolver and refuses connections, so a browser reports
+   > `DNS_PROBE_FINISHED_NXDOMAIN` or "site can't be reached". Plenty of older
+   > tutorials still link to it. `admob.google.com` is the address Google's own
+   > sign-in troubleshooter gives, and it redirects to the console at
+   > `/v2/home`.
 
 2. **Apps → Add app.** Answer "Yes" to *Is your app listed on a supported app
    store?* if `com.voucherhunt.mobile` is already published, and search for it;
