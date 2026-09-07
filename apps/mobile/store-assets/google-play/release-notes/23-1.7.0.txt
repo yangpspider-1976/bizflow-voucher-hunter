@@ -1,0 +1,11 @@
+<en-US>
+Daily ad missions, and a clearer path to your next level.
+
+• Watch a short ad in the morning, at lunch or in the evening to earn points
+• A new Levels screen showing what each level costs and what it opens
+• See which partners are waiting for you at each level
+• Locked offers now show the level and the XP you still need
+• Pick up to three badges to feature on your profile
+• Achievements show the date you earned each tier
+• A quiet nudge when a mission has one step left
+</en-US>
