@@ -295,20 +295,26 @@ export default function StaffPage() {
     if (!file) return;
     setScanMessageTone("info");
     setScanMessage("Reading QR image...");
-    const url = URL.createObjectURL(file);
     try {
-      const { BrowserQRCodeReader } = await import("@zxing/browser");
-      const result = await new BrowserQRCodeReader().decodeFromImageUrl(url);
-      const value = result.getText().trim();
-      setCode(value);
-      setScanMessageTone("success");
-      setScanMessage("QR image read successfully.");
-      await validate(value);
+      const { decodeQrFromFile } = await import("@/lib/qr-image-decode");
+      const outcome = await decodeQrFromFile(file);
+      if (outcome.ok) {
+        setCode(outcome.text);
+        setScanMessageTone("success");
+        setScanMessage("QR image read successfully.");
+        await validate(outcome.text);
+        return;
+      }
+      setScanMessageTone("error");
+      setScanMessage(
+        outcome.reason === "unsupported-file"
+          ? "That file could not be opened as an image. iPhone HEIC photos often fail here — send it as JPEG or PNG, or take a screenshot of the code."
+          : "No readable QR code was found in that image. Try a straight-on shot with the whole code in frame and no glare, or type the code in above.",
+      );
     } catch {
       setScanMessageTone("error");
-      setScanMessage("No readable QR code was found in that image.");
+      setScanMessage("Unable to read that image. Try again or type the code in above.");
     } finally {
-      URL.revokeObjectURL(url);
       if (uploadRef.current) uploadRef.current.value = "";
     }
   }

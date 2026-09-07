@@ -33,6 +33,7 @@
     "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@zxing/browser": "^0.2.0",
+    "@zxing/library": "^0.22.0",
     "leaflet": "^1.9.4",
     "next": "14.2.30",
     "pg": "^8.23.0",
