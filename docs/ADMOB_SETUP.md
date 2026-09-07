@@ -20,12 +20,10 @@ missions cannot be completed**. That is the gap these steps close.
    separate from the Play Console login, though the same Google account can hold
    both.
 
-   > Not `apps.admob.com`. That host is dead — it resolves to `0.0.0.0` from
-   > every public resolver and refuses connections, so a browser reports
-   > `DNS_PROBE_FINISHED_NXDOMAIN` or "site can't be reached". Plenty of older
-   > tutorials still link to it. `admob.google.com` is the address Google's own
-   > sign-in troubleshooter gives, and it redirects to the console at
-   > `/v2/home`.
+   Go straight to `/v2/home` if the marketing page's **Sign in** button dies:
+   **https://admob.google.com/v2/home**. The older `apps.admob.com` address
+   still works and simply redirects here, but see the warning below — on many
+   networks it is the first thing to break.
 
 2. **Apps → Add app.** Answer "Yes" to *Is your app listed on a supported app
    store?* if `com.voucherhunt.mobile` is already published, and search for it;
@@ -101,9 +99,49 @@ This is what actually makes an ad pay.
 
 ---
 
+## If the console will not load: ad-blocking DNS
+
+Symptom: `admob.google.com` opens, **Sign in** goes nowhere, and the browser
+says "site can't be reached" or `DNS_PROBE_FINISHED_NXDOMAIN`.
+
+This is almost never Google being down. Ad-blocking DNS — a router feature, a
+Pi-hole, NextDNS, AdGuard, or an ISP filter — answers `0.0.0.0` for anything on
+an ad blocklist, and `apps.admob.com` is on those lists because `admob.com` is
+an ad-serving domain. The sign-in flow bounces through it, so it dies there
+while `admob.google.com` itself loads fine.
+
+Diagnose it in one command. Compare what your resolver says against what the
+public DNS actually holds — DNS-over-HTTPS is used deliberately, because a
+resolver that intercepts port 53 will happily lie about being `8.8.8.8`:
+
+```bash
+nslookup apps.admob.com                     # blocked network answers 0.0.0.0
+curl -s -H "accept: application/dns-json" \
+  "https://dns.google/resolve?name=apps.admob.com&type=A"   # real: adwords.l.google.com
+```
+
+**This matters far more than console access.** The same blocklists cover
+`googleads.g.doubleclick.net`, `pagead2.googlesyndication.com` and
+`googleadservices.com` — which is where the SDK actually fetches ads from. On a
+network that blocks those, **no test ad will ever load**, and the failure looks
+exactly like a wiring bug in the app: the Watch button spins and then reports no
+ad available. Before debugging any ad code, check those three names resolve.
+
+Fix by pointing the machine (or the phone, or the router) at an unfiltered
+resolver — `8.8.8.8` / `1.1.1.1` — or by allowlisting `admob.com`,
+`doubleclick.net` and `googlesyndication.com` in whatever is doing the blocking.
+A phone on mobile data instead of the office Wi-Fi is the quickest way to prove
+which side the problem is on.
+
+---
+
 ## Verifying it works
 
 Do these in order; each one isolates a different half.
+
+0. **The device can reach Google's ad servers.** See the section above. On a
+   network with ad-blocking DNS nothing below will work, and every symptom will
+   point at the app instead of at the network.
 
 1. **Ad plays at all.** Install a dev or production build (not Expo Go — the ad
    SDK is native and the app deliberately hides the Watch button where it is
