@@ -111,7 +111,10 @@ only `https://` links fall back to a chooser dialog.
 
 Audited from the code, not assumed. Sources: the `SCHEMA` in `src/server/db.ts`,
 `analytics_events` writes in `src/server/voucher-engine.ts`, and the mobile
-dependency list (no ads or analytics SDKs are present).
+dependency list. There is no analytics SDK. There **is** an ads SDK as of 1.7.0
+— `react-native-google-mobile-ads` — which collects and shares the advertising
+ID; see the per-type table in
+[PLAY_CONSOLE_ANSWERS.md](PLAY_CONSOLE_ANSWERS.md).
 
 **Does your app collect or share any of the required user data types?** → Yes
 **Is all user data encrypted in transit?** → Yes (HTTPS only; the client refuses
@@ -186,12 +189,19 @@ Two points a reviewer may probe:
 
 ## Store listing
 
-- **Content rating questionnaire.** No user-generated content, no ads, no
-  gambling. The roulette is a promotional reveal with no stake and no purchase
-  required — answer the gambling questions accordingly, but read them carefully,
-  since a "spin to win" mechanic invites scrutiny.
-- **Target audience.** Not children.
-- **Ads declaration.** Contains no ads.
+- **Content rating questionnaire.** **Contains ads** since 1.7.0 — the
+  questionnaire asks, and the previous submission answered No, so it has to be
+  re-answered. Users do submit photos and receipts as mission evidence, but they
+  go to our reviewers and are never shown to other users, so that is not
+  user-generated content in the rating sense. No gambling: the roulette is a
+  promotional reveal with no stake and no purchase required — answer those
+  questions accordingly, but read them carefully, since a "spin to win" mechanic
+  invites scrutiny.
+- **Target audience.** Not children — and since 1.7.0 that is load-bearing, as
+  serving ads to an under-18 bracket pulls the app into the Families ads
+  programme.
+- **Ads declaration.** **Contains ads.** Opt-in rewarded video, three per day at
+  most. Adds a "Contains ads" badge to the listing.
 - **Assets needed:** 512×512 icon, 1024×500 feature graphic, at least two
   phone screenshots, a short description (≤80 chars), and a full description.
   The launcher icon can be regenerated at any size with

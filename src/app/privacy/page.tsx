@@ -22,8 +22,14 @@ export const metadata: Metadata = {
  * for the audit), but this has NOT been reviewed by a lawyer. Philippine Data
  * Privacy Act obligations and the operating entity's legal name still need to be
  * confirmed before publishing.
+ *
+ * This page and the Play Data Safety form are one statement made twice, and a
+ * reviewer reads them against the manifest. If an SDK is added or removed, both
+ * change together or the app is in violation of whichever is now false — which
+ * is exactly what happened when rewarded ads shipped while this page still said
+ * there were none.
  */
-const UPDATED = "30 July 2026";
+const UPDATED = "7 September 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -60,13 +66,23 @@ export default function PrivacyPolicyPage() {
           <strong>Activity in the service.</strong> Vouchers drawn and issued,
           reservations, Loyalty Points earned and spent, and referral link opens.
         </li>
+        <li>
+          <strong>Advertising identifier.</strong> The app offers optional
+          rewarded ads: you may choose to watch a short video to earn points. If
+          you do, Google&apos;s Mobile Ads SDK reads the advertising ID your
+          device provides, to select and measure the ad and to detect invalid
+          traffic. It is a resettable device identifier, not your name or
+          number, and you can reset or limit it in your Android settings.
+        </li>
       </ul>
 
       <p>
         We do <strong>not</strong> collect your location, contacts, photos, or
         the contents of your SMS inbox. The app never reads SMS messages — you
-        type the verification code yourself. There are no advertising or
-        third-party analytics SDKs in the app.
+        type the verification code yourself. There are no third-party analytics
+        SDKs in the app; the only third-party SDK that receives anything about
+        you is Google&apos;s Mobile Ads SDK, and only when you choose to watch a
+        rewarded ad.
       </p>
 
       <h2>How we use it</h2>
@@ -105,14 +121,22 @@ export default function PrivacyPolicyPage() {
           notification text.
         </li>
         <li>
+          <strong>Google,</strong> when you choose to watch a rewarded ad. Google
+          receives your device&apos;s advertising ID and standard ad-request
+          information so it can serve and measure the ad. It does not receive
+          your name, mobile number, or email address.
+        </li>
+        <li>
           <strong>Our hosting and database providers,</strong> who store the data
           on our behalf.
         </li>
       </ul>
 
       <p>
-        We do not sell your personal information, and we do not share it for
-        advertising.
+        We do not sell your personal information. The only information shared for
+        advertising is the advertising ID described above, shared with Google when
+        you choose to watch a rewarded ad. We never share your mobile number,
+        name, or email address with advertisers.
       </p>
 
       <h2>How long we keep it</h2>
@@ -125,6 +149,12 @@ export default function PrivacyPolicyPage() {
 
       <h2>Your choices</h2>
       <ul>
+        <li>
+          <strong>Rewarded ads.</strong> They are never shown unless you tap to
+          watch one; nothing in the app plays an ad on its own. Skipping them
+          costs you only the points that ad would have paid. You can also reset
+          or limit your advertising ID in <em>Android Settings → Privacy → Ads</em>.
+        </li>
         <li>
           <strong>Notifications.</strong> Turn any category off under
           <em> More → Notifications</em> in the app, or switch them off entirely

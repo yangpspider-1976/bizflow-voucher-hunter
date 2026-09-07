@@ -104,24 +104,37 @@ attribution, or analytics SDK (Expo modules, React Native, and
 
 ### Advertising ID — a separate declaration
 
-App content → **Advertising ID** → *Does the app use an ad ID?* → **No**.
+App content → **Advertising ID** → *Does the app use an ad ID?* → **Yes**
+(since 1.7.0).
+
+Purposes to tick: **Advertising or marketing**, and **Fraud prevention,
+security, and compliance**. Nothing else. Advertising is why the SDK is there;
+the fraud purpose is Google's own invalid-traffic detection, not ours — our
+anomaly detection keys off `device_id_hash` and never sees the ad ID. Do **not**
+tick Analytics: there is still no analytics SDK, and the KPI dashboard is
+computed server-side from our own tables.
 
 This is not the same question as "contains ads", and it **blocks submission**
 until answered — the console reports it as "Incomplete ad ID declaration" and
 refuses to send the version for review.
 
-Answer from the merged manifest, not from the dependency list: an SDK can merge
+Answer from the merged manifest, not from the dependency list: an SDK merges
 `com.google.android.gms.permission.AD_ID` in without the app declaring it, and
-Play blocks releases where the declaration and the manifest disagree. Confirm
-with:
+Play blocks releases where the declaration and the manifest disagree. Confirm on
+a built artifact:
 
 ```bash
-aapt2 dump permissions <build>.apk
+aapt2 dump permissions <build>.aab
+# or, from a local prebuild:
+grep AD_ID apps/mobile/android/app/build/intermediates/merged_manifest/release/*/AndroidManifest.xml
 ```
 
-On the 1.0.0 build there is no `AD_ID` permission, so **No** is correct.
-`expo-notifications` uses Firebase Messaging, which does not add it; Firebase
-Analytics would. Re-check if an analytics or attribution SDK is ever added.
+Up to 1.6.0 the answer was **No** and that was correct — nothing pulled the
+permission in. `react-native-google-mobile-ads` (1.7.0) does, via the
+`play-services-ads` AAR, and it was verified present in the merged manifest of
+build 24 before this declaration was changed. The permission cannot simply be
+suppressed: it can be added to `blockedPermissions`, but that forces
+non-personalised ads only and cuts the revenue the feature exists for.
 
 The same dump confirms `READ_SMS` and `RECEIVE_SMS` are absent, which is the
 evidence for the §6 claim that the app never reads SMS — `blockedPermissions` in
@@ -168,13 +181,29 @@ Expected outcome: **Everyone / PEGI 3 / ESRB Everyone**.
 |---|---|
 | Target age groups | **18 and over**, only |
 | Does your store listing appeal to children? | No |
-| Ads suitable for children? | N/A — the app has no ads |
+| Ads suitable for children? | N/A — the audience is 18+, so the question does not arise |
 
 Rationale: the app books restaurant and retail reservations and carries a
 loyalty balance, both of which assume an adult holder. Selecting any bracket
-under 18 pulls the app into Families policy — Designed for Families declarations,
-a stricter data-safety bar, and review of the ad-free claim. There is no reason
-to take that on.
+under 18 pulls the app into Families policy — Designed for Families
+declarations, a stricter data-safety bar, and the Families ads programme, which
+restricts rewarded ads to certified networks and forbids personalised ads to
+children. Since 1.7.0 the app serves rewarded ads, so staying 18+ is now
+load-bearing rather than merely tidy.
+
+### Ads declaration (App content → Ads)
+
+**Does your app contain ads?** → **Yes** (since 1.7.0).
+
+This is separate from the Advertising ID declaration in §3 and from the Data
+Safety form; all three have to agree. Answering Yes puts a "Contains ads" badge
+on the store listing, which is correct and unavoidable — a rewarded ad is still
+an ad, even though the player opts into each one.
+
+Also re-answer the **content rating** questionnaire: it asks whether the app
+contains ads, and the previous submission answered No. The rating itself is
+unlikely to move for an 18+ app with opt-in rewarded video, but an unamended
+answer is a false declaration.
 
 The privacy policy already states the app is not directed to children
 ([privacy/page.tsx:139-143](../src/app/privacy/page.tsx#L139-L143)), which is
@@ -240,7 +269,7 @@ functionality) is the conservative option and costs little.
 
 ### Data handling — per-type answers
 
-Step 4 asks five questions per data type. All six answered:
+Step 4 asks five questions per data type. All seven answered:
 
 | Data type | Collected / Shared | Ephemeral? | Required? | Collection purposes | Sharing purposes |
 |---|---|---|---|---|---|
@@ -249,7 +278,8 @@ Step 4 asks five questions per data type. All six answered:
 | User ID | Collected only | No | Required | App functionality, Account management, Fraud prevention & security | — |
 | phone number | Collected **and** Shared | No | Required | App functionality, Account management, Fraud prevention & security | App functionality |
 | App interactions | Collected only | No | Required | App functionality, Analytics, Fraud prevention & security | — |
-| Device or other IDs | Collected only | No | **Users can choose** | App functionality | — |
+| Device or other IDs | Collected **and** Shared | No | **Users can choose** | App functionality, Advertising or marketing, Fraud prevention & security | Advertising or marketing |
+| Photos and videos | Collected only | No | **Users can choose** | App functionality | — |
 
 **What counts as "shared".** Google excludes transfers to a *service provider
 processing on the developer's behalf*. The SMS provider, Expo's push service, and
@@ -272,18 +302,41 @@ partner dashboard metrics, which is analytics in Google's sense. This is
 unrelated to the "no analytics SDKs" point in §3, which is about third-party
 SDKs and still holds.
 
-**Never tick Advertising or marketing, or Developer communications**, on any
-type. There are no ads, and nothing in the code messages users for marketing —
-only transactional SMS, which is App functionality.
+**Advertising or marketing applies to exactly one type: Device or other IDs.**
+Since 1.7.0 the app shows optional rewarded ads, so the advertising ID is
+collected and shared with Google for advertising, and Google also uses it for
+invalid-traffic detection. No other type reaches an advertiser — Google never
+receives a name, number, or email. **Never tick Developer communications** on
+any type: nothing in the code messages users for marketing, only transactional
+SMS, which is App functionality.
+
+**Photos and videos** is new to this table and was missed when evidence
+submission shipped in 1.6.0, not when ads shipped. A mission may ask for a
+receipt or photo, and `mission_proof_files` stores the image itself — base64,
+against a wallet id, with an `expires_at`. Optional because only some urgent
+missions ask for evidence and the player chooses whether to enter one; not
+shared, because only our own reviewers see it.
 
 On **User ID**: the app assigns an internal user id, and `buildReferralLink()`
 embeds it in the referral URL shared out of the app, so it does leave the device.
 Declared collected but **not** shared — user-initiated sharing is an explicit
 exception in Google's rules, and the link only travels when the user taps share.
 
-**Declare as NOT collected** (verified absent): location, contacts, SMS or call
-logs, photos or videos, files, calendar, health, financial account details, and
-any advertising identifier.
+**Declare as NOT collected** (verified absent): contacts, SMS or call logs,
+files, calendar, health, and financial account details.
+
+Three entries left this list, and each for its own reason:
+
+- **Advertising identifier** — collected and shared since 1.7.0. Covered by
+  Device or other IDs above.
+- **Photos or videos** — collected since 1.6.0, stored in
+  `mission_proof_files`. Its own row above.
+- **Location** — stays declared *not collected*, but the reasoning changed and
+  is worth writing down. Coarse and fine location are requested, but only at the
+  moment somebody taps Join on a mission with a radius, and only to run that one
+  check. Nothing persists: the only `latitude`/`longitude` columns in the schema
+  belong to `businesses`, which are partner store coordinates, not people. If a
+  reported position is ever written to a row, this answer changes.
 
 The deletion page is [src/app/delete-account/page.tsx](../src/app/delete-account/page.tsx)
 — unauthenticated and statically rendered, so a reviewer reaches it without the
@@ -417,10 +470,15 @@ Your vouchers, reservations, and points balance live in the app. Optional
 notifications remind you before a booking and when points land — turn any
 category off at any time under More > Notifications.
 
-NO ADS, NO TRACKING
-Voucher Hunt contains no advertising and no third-party analytics. We ask for
-your mobile number to sign you in and your name to hold your reservation.
-Nothing more.
+LEVEL UP AS YOU GO
+Every hunt, visit and mission earns XP. Levels unlock partners, earlier access
+to offers and extra hunts a day, and a badge wall records what you have done.
+
+ADS ARE OPTIONAL, TRACKING IS NOT A THING
+You can watch a short ad to earn points if you want to — nothing plays on its
+own, and skipping it costs you only those points. There is no third-party
+analytics in the app. We ask for your mobile number to sign you in and your name
+to hold your reservation. Nothing more.
 
 Sign in with your mobile number to get started.
 ```
