@@ -1,13 +1,17 @@
 import { z } from "zod";
 import { assertBusinessAccess, requireAdmin } from "@/server/auth";
-import { fail, ok } from "@/server/errors";
+import { AppError, fail, ok } from "@/server/errors";
 import { enforceRateLimit } from "@/server/rate-limit";
 import { onQrRedeemedByWallet } from "@/server/gamification/hooks";
 import { redeemRewardVoucher } from "@/server/rewards-network";
 
 const schema = z.object({
   codeOrToken: z.string().min(3),
-  businessId: z.string().min(3),
+  // Optional, and resolved below rather than here: an item voucher names its
+  // partner, but a plain LP voucher is spendable anywhere and carries none, so
+  // an account bound to a single business should not have to restate it. Left
+  // required, a missing one surfaced as the generic "Invalid request input".
+  businessId: z.string().min(3).optional(),
   amount: z.union([z.string().min(1), z.number().positive()]),
   // The bill being paid, as opposed to `amount`, which is how much of the
   // voucher is spent. Only fixed-denomination vouchers require it, so it stays
@@ -26,13 +30,26 @@ export async function POST(request: Request) {
       subject: session.email,
     });
     const input = schema.parse(await request.json());
-    assertBusinessAccess(session, input.businessId);
-    const result = await redeemRewardVoucher({ ...input, staffName: session.email });
+    const scoped = session.businessIds.filter((id) => id !== "*");
+    const businessId = input.businessId ?? (scoped.length === 1 ? scoped[0] : undefined);
+    if (!businessId) {
+      throw new AppError(
+        "E-REWARD-VOUCHER-PARTNER",
+        "Choose which partner is accepting this voucher",
+        400,
+      );
+    }
+    assertBusinessAccess(session, businessId);
+    const result = await redeemRewardVoucher({
+      ...input,
+      businessId,
+      staffName: session.email,
+    });
     // Spending an LP voucher is a visit too, so it counts toward Voucher User
     // and City Explorer alongside campaign vouchers.
     await onQrRedeemedByWallet({
       walletId: result.redemption.walletId,
-      businessId: input.businessId,
+      businessId,
       objectType: "reward_voucher_redemption",
       objectId: result.redemption.id,
       amountCentavos: result.redemption.amountCentavos,

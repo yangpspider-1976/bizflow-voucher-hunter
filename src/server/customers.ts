@@ -61,6 +61,49 @@ export type CustomerVoucher = {
   slotStartTime?: string;
 };
 
+/**
+ * One acceptance of an LP voucher at a partner's checkout.
+ *
+ * A plain LP voucher is a balance, so it can be spent down over several visits
+ * and at several partners — which is why this is a list per voucher rather than
+ * a single "redeemed at" column.
+ */
+export type CustomerLoyaltyRedemption = {
+  id: string;
+  businessId: string;
+  businessName: string;
+  amountCentavos: number;
+  staffName: string;
+  redeemedAt: string;
+  settlementStatus: string;
+};
+
+/**
+ * A voucher the customer bought with Loyalty Points, and where it was spent.
+ *
+ * Deliberately separate from `CustomerVoucher`: campaign vouchers hang off a
+ * `users` row and belong to a campaign, while these hang off the wallet and
+ * belong to no campaign at all. Folding them into one table would leave the
+ * campaign and slot columns permanently empty for half the rows.
+ */
+export type CustomerLoyaltyVoucher = {
+  id: string;
+  code: string;
+  /** The storefront item it was bought against, when pinned to one. */
+  productName?: string;
+  /** The partner that sold that item; only pinned vouchers have one. */
+  pinnedBusinessName?: string;
+  amountCentavos: number;
+  remainingCentavos: number;
+  /** Set on fixed-denomination vouchers, which go in whole against a floor. */
+  minimumSpendCentavos?: number;
+  status: string;
+  issuedAt: string;
+  expiresAt?: string;
+  redeemedAt?: string;
+  redemptions: CustomerLoyaltyRedemption[];
+};
+
 export type CustomerCampaign = {
   campaignId: string;
   campaignTitle: string;
@@ -75,6 +118,7 @@ export type CustomerDetail = {
   summary: CustomerSummary;
   campaigns: CustomerCampaign[];
   vouchers: CustomerVoucher[];
+  loyaltyVouchers: CustomerLoyaltyVoucher[];
 };
 
 /**
@@ -153,6 +197,122 @@ async function partnerBalancesByPhone(
     else byPhone.set(phone, [bucket]);
   }
   return byPhone;
+}
+
+/**
+ * The vouchers a customer bought with Loyalty Points, and every checkout that
+ * accepted one.
+ *
+ * These live entirely outside `vouchers`/`users` — an LP voucher is minted
+ * against the wallet, not against a campaign entry — so the campaign-voucher
+ * query above cannot see them and the customer page showed nothing at all for a
+ * customer who paid with LP.
+ *
+ * Scoped like everything else here, but on the redemption rather than on the
+ * voucher: a plain LP voucher belongs to no partner until it is spent, so staff
+ * see the ones actually presented at their own checkout (plus item vouchers
+ * pinned to their storefront) and never a customer's unspent balance.
+ */
+async function loyaltyVouchersForPhone(
+  db: Exec,
+  phone: string,
+  session: { role: string; businessIds: string[] },
+): Promise<CustomerLoyaltyVoucher[]> {
+  const staffIds =
+    session.role === "staff" ? session.businessIds.filter((id) => id !== "*") : [];
+  if (session.role === "staff" && staffIds.length === 0) return [];
+
+  const placeholders = staffIds.map(() => "?").join(", ");
+  const voucherScope = staffIds.length
+    ? ` AND (rv.business_id IN (${placeholders})
+             OR EXISTS (
+               SELECT 1 FROM reward_voucher_redemptions rr
+               WHERE rr.voucher_id = rv.id AND rr.business_id IN (${placeholders})
+             ))`
+    : "";
+  const redemptionScope = staffIds.length
+    ? ` AND r.business_id IN (${placeholders})`
+    : "";
+
+  const [voucherRows, redemptionRows] = await Promise.all([
+    all(
+      db,
+      `SELECT
+         rv.id AS id,
+         rv.voucher_code AS code,
+         rv.amount_centavos AS amount_centavos,
+         rv.remaining_centavos AS remaining_centavos,
+         rv.minimum_spend_centavos AS minimum_spend_centavos,
+         rv.status AS status,
+         rv.issued_at AS issued_at,
+         rv.expires_at AS expires_at,
+         rv.redeemed_at AS redeemed_at,
+         p.name AS product_name,
+         pb.name AS pinned_business_name
+       FROM reward_vouchers rv
+       JOIN reward_wallets w ON w.id = rv.wallet_id
+       LEFT JOIN reward_products p ON p.id = rv.product_id
+       LEFT JOIN businesses pb ON pb.id = rv.business_id
+       WHERE w.phone = ?${voucherScope}
+       ORDER BY rv.issued_at DESC`,
+      [phone, ...staffIds, ...staffIds],
+    ),
+    all(
+      db,
+      `SELECT
+         r.id AS id,
+         r.voucher_id AS voucher_id,
+         r.business_id AS business_id,
+         b.name AS business_name,
+         r.amount_centavos AS amount_centavos,
+         r.staff_name AS staff_name,
+         r.settlement_status AS settlement_status,
+         r.created_at AS created_at
+       FROM reward_voucher_redemptions r
+       JOIN reward_wallets w ON w.id = r.wallet_id
+       JOIN businesses b ON b.id = r.business_id
+       WHERE w.phone = ?${redemptionScope}
+       ORDER BY r.created_at DESC`,
+      [phone, ...staffIds],
+    ),
+  ]);
+
+  const byVoucher = new Map<string, CustomerLoyaltyRedemption[]>();
+  for (const row of redemptionRows) {
+    const redemption: CustomerLoyaltyRedemption = {
+      id: String(row.id),
+      businessId: String(row.business_id),
+      businessName: String(row.business_name),
+      amountCentavos: Number(row.amount_centavos ?? 0),
+      staffName: String(row.staff_name ?? ""),
+      redeemedAt: String(row.created_at),
+      settlementStatus: String(row.settlement_status ?? ""),
+    };
+    const voucherId = String(row.voucher_id);
+    const held = byVoucher.get(voucherId);
+    if (held) held.push(redemption);
+    else byVoucher.set(voucherId, [redemption]);
+  }
+
+  return voucherRows.map((row) => ({
+    id: String(row.id),
+    code: String(row.code),
+    productName: row.product_name ? String(row.product_name) : undefined,
+    pinnedBusinessName: row.pinned_business_name
+      ? String(row.pinned_business_name)
+      : undefined,
+    amountCentavos: Number(row.amount_centavos ?? 0),
+    remainingCentavos: Number(row.remaining_centavos ?? 0),
+    minimumSpendCentavos:
+      row.minimum_spend_centavos === null || row.minimum_spend_centavos === undefined
+        ? undefined
+        : Number(row.minimum_spend_centavos),
+    status: String(row.status),
+    issuedAt: String(row.issued_at),
+    expiresAt: row.expires_at ? String(row.expires_at) : undefined,
+    redeemedAt: row.redeemed_at ? String(row.redeemed_at) : undefined,
+    redemptions: byVoucher.get(String(row.id)) ?? [],
+  }));
 }
 
 export async function listCustomers(
@@ -275,7 +435,12 @@ export async function getCustomer(
   // the same 404 as a phone that does not exist: the scope must not be probeable.
   if (!summaryRow) throw new AppError("E-CUSTOMER-404", "Customer not found", 404);
 
-  const partnerBalances = (await partnerBalancesByPhone(db, [phone], session)).get(phone) ?? [];
+  const [partnerBalances, loyaltyVouchers] = await Promise.all([
+    partnerBalancesByPhone(db, [phone], session).then(
+      (byPhone) => byPhone.get(phone) ?? [],
+    ),
+    loyaltyVouchersForPhone(db, phone, session),
+  ]);
 
   // The latest non-empty name/email wins: a customer can type a different name
   // per campaign, and the most recent is the best guess at what to call them.
@@ -351,6 +516,7 @@ export async function getCustomer(
       attemptCount: Number(row.attempt_count ?? 0),
       hasVoucher: Number(row.voucher_count ?? 0) > 0,
     })),
+    loyaltyVouchers,
     vouchers: voucherRows.map((row) => ({
       id: String(row.id),
       code: String(row.code),

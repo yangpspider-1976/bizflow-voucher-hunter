@@ -37,7 +37,7 @@ export default async function CustomerDetailPage({
     throw error;
   }
 
-  const { summary, campaigns, vouchers } = customer;
+  const { summary, campaigns, vouchers, loyaltyVouchers } = customer;
   const partners = summary.partnerBalances;
   // A bucket cannot exist without a wallet, but a wallet can exist with no
   // buckets — so either one present means there are points to show.
@@ -206,6 +206,9 @@ export default async function CustomerDetailPage({
         </table>
       </section>
 
+      {/* Campaign vouchers only. Anything bought with Loyalty Points is minted
+          against the wallet rather than a campaign entry, so it lives in its own
+          table below rather than in rows with an empty campaign column. */}
       <section className="panel table-wrap">
         <div className="admin-topbar">
           <div>
@@ -251,6 +254,92 @@ export default async function CustomerDetailPage({
                   <td>{formatDateTime(voucher.redeemedAt)}</td>
                   <td>
                     <span className={statusBadge(voucher.status)}>{voucher.status}</span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {/* The other half of a customer's voucher history: what they bought with
+          Loyalty Points and which partner took it as payment. A plain LP voucher
+          is a balance, so one voucher can be presented at several checkouts —
+          hence a list of acceptances per row rather than one "redeemed" date. */}
+      <section className="panel table-wrap">
+        <div className="admin-topbar">
+          <div>
+            <h2>Loyalty Points vouchers</h2>
+            <p className="muted">
+              Vouchers bought with LP, and every checkout that accepted one.
+            </p>
+          </div>
+        </div>
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Voucher</th>
+              <th>Type</th>
+              <th>Value</th>
+              <th>Remaining</th>
+              <th>Issued</th>
+              <th>Redeemed at</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loyaltyVouchers.length === 0 ? (
+              <tr>
+                <td className="muted" colSpan={7}>
+                  No Loyalty Points vouchers for this customer.
+                </td>
+              </tr>
+            ) : (
+              loyaltyVouchers.map((voucher) => (
+                <tr key={voucher.id}>
+                  <td>
+                    <strong>{voucher.productName ?? "LP voucher"}</strong>
+                    <div className="muted customer-phone">{voucher.code}</div>
+                  </td>
+                  <td>
+                    {voucher.productName
+                      ? "Storefront item"
+                      : voucher.minimumSpendCentavos
+                        ? "Fixed denomination"
+                        : "Global LP"}
+                    {voucher.pinnedBusinessName ? (
+                      <div className="muted customer-phone">
+                        {voucher.pinnedBusinessName}
+                      </div>
+                    ) : voucher.minimumSpendCentavos ? (
+                      <div className="muted customer-phone">
+                        {formatLoyaltyPoints(voucher.minimumSpendCentavos)} minimum
+                        spend
+                      </div>
+                    ) : null}
+                  </td>
+                  <td>{formatLoyaltyPoints(voucher.amountCentavos)}</td>
+                  <td>{formatLoyaltyPoints(voucher.remainingCentavos)}</td>
+                  <td>{formatDate(voucher.issuedAt)}</td>
+                  <td>
+                    {voucher.redemptions.length === 0 ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      voucher.redemptions.map((redemption) => (
+                        <div key={redemption.id}>
+                          <strong>{redemption.businessName}</strong>
+                          <div className="muted customer-phone">
+                            {formatLoyaltyPoints(redemption.amountCentavos)} ·{" "}
+                            {formatDateTime(redemption.redeemedAt)}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </td>
+                  <td>
+                    <span className={statusBadge(voucher.status)}>
+                      {voucher.status}
+                    </span>
                   </td>
                 </tr>
               ))

@@ -21,7 +21,7 @@ import type { IScannerControls } from "@zxing/browser";
 import { ApiError, api } from "@/lib/api-client";
 import { MAX_MONEY_PESOS } from "@/lib/limits";
 import { toDisplayPhone } from "@/lib/phone-display";
-import type { Campaign, CampaignSlot, EndUser, Voucher } from "@/types/voucher";
+import type { Business, Campaign, CampaignSlot, EndUser, Voucher } from "@/types/voucher";
 import { SelectMenu } from "../_components/SelectMenu";
 
 type Validation = {
@@ -100,6 +100,11 @@ export default function StaffPage() {
   // The bill a fixed-denomination voucher is being applied to, which is a
   // different number from how much of the voucher is spent.
   const [lpPurchaseAmount, setLpPurchaseAmount] = useState("");
+  // Which partner is accepting the payment. An item voucher names it itself, but
+  // a plain LP voucher is spendable anywhere, so nothing in the voucher says
+  // which checkout is holding it — it has to come from the session's own scope.
+  const [lpBusinesses, setLpBusinesses] = useState<Pick<Business, "id" | "name">[]>([]);
+  const [lpBusinessId, setLpBusinessId] = useState("");
   const [validationFailure, setValidationFailure] = useState<{
     message: string;
     title: string;
@@ -162,6 +167,10 @@ export default function StaffPage() {
               : "",
           );
           setLpPurchaseAmount("");
+          // An item voucher can only be collected where it was bought, so the
+          // partner is fixed rather than chosen. A plain LP voucher keeps
+          // whatever the checkout already selected.
+          if (lp.product) setLpBusinessId(lp.product.businessId);
           return;
         } catch {
           // Not an LP voucher either — fall through to the original message.
@@ -375,7 +384,7 @@ export default function StaffPage() {
         method: "POST",
         body: JSON.stringify({
           codeOrToken: lpResult.voucher.voucherCode,
-          businessId: lpResult.product?.businessId,
+          businessId: lpResult.product?.businessId ?? lpBusinessId,
           amount: lpAmount,
           purchaseAmount: lpPurchaseAmount || undefined,
         }),
@@ -424,6 +433,24 @@ export default function StaffPage() {
       showAdminToast(error instanceof Error ? error.message : "Unable to reschedule.");
     }
   }
+
+  // The businesses this session may redeem against. Scoped server-side, so a
+  // staff account gets a single entry and picks nothing.
+  useEffect(() => {
+    let active = true;
+    api<Business[]>("/api/businesses")
+      .then((businesses) => {
+        if (!active) return;
+        setLpBusinesses(businesses.map(({ id, name }) => ({ id, name })));
+        if (businesses.length === 1) setLpBusinessId(businesses[0].id);
+      })
+      .catch(() => {
+        if (active) setLpBusinesses([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Load alternate slots when the current voucher belongs to a reschedule-enabled campaign.
   useEffect(() => {
@@ -774,6 +801,25 @@ export default function StaffPage() {
               </div>
               {lpResult.voucher.status === "Active" ? (
                 <>
+                  {/*
+                    A plain LP voucher carries no partner of its own — it is
+                    spendable anywhere — so the checkout has to say who is being
+                    credited. An account scoped to one business has nothing to
+                    choose and the control stays hidden.
+                  */}
+                  {!lpResult.product && lpBusinesses.length !== 1 ? (
+                    <SelectMenu
+                      className="field staff-amount-field"
+                      label="Redeeming at"
+                      onChange={setLpBusinessId}
+                      options={lpBusinesses.map((business) => ({
+                        value: business.id,
+                        label: business.name,
+                      }))}
+                      placeholder="Choose the partner…"
+                      value={lpBusinessId}
+                    />
+                  ) : null}
                   <label className="field staff-amount-field">
                     <span>
                       {lpResult.product
@@ -832,6 +878,7 @@ export default function StaffPage() {
                 disabled={
                   lpResult.voucher.status !== "Active" ||
                   !lpAmount.trim() ||
+                  !(lpResult.product?.businessId ?? lpBusinessId) ||
                   // A fixed voucher cannot be submitted without the bill: the
                   // server would only reject it a round trip later.
                   Boolean(

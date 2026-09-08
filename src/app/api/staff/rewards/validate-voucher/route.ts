@@ -40,6 +40,11 @@ export async function POST(request: Request) {
         maskedPhone: result.wallet.maskedPhone,
         status: result.wallet.status,
       },
+      // The named item a storefront voucher buys, and the partner that sold it.
+      // The engine has resolved this all along but the response dropped it, so
+      // the checkout could neither name what to hand over nor tell the redeem
+      // leg which partner was being credited.
+      product: result.product,
     });
   } catch (error) {
     return fail(error);
