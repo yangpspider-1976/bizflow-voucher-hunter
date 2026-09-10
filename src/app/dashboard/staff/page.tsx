@@ -167,10 +167,14 @@ export default function StaffPage() {
               : "",
           );
           setLpPurchaseAmount("");
-          // An item voucher can only be collected where it was bought, so the
-          // partner is fixed rather than chosen. A plain LP voucher keeps
-          // whatever the checkout already selected.
-          if (lp.product) setLpBusinessId(lp.product.businessId);
+          // Deliberately does not touch `lpBusinessId`, which holds the partner
+          // *this checkout* chose and is read only for a plain LP voucher: an
+          // item voucher names its own, so every consumer prefers
+          // `lpResult.product.businessId` outright. Writing the item's partner
+          // here changed nothing about the item redemption and only poisoned
+          // the next plain voucher, which inherited a partner nobody picked —
+          // and could not even see it when the select is hidden for an account
+          // scoped to one business.
           return;
         } catch {
           // Not an LP voucher either — fall through to the original message.

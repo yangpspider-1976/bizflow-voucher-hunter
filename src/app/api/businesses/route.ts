@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { requireAdmin } from "@/server/auth";
+import { canAccessBusiness, requireAdmin } from "@/server/auth";
 import { createBusiness, listBusinesses } from "@/server/admin";
 import { AppError, fail, ok } from "@/server/errors";
 
@@ -20,11 +20,11 @@ export async function GET(request: Request) {
   try {
     const session = await requireAdmin(request);
     const businesses = await listBusinesses();
-    return ok(
-      session.role === "staff"
-        ? businesses.filter((business) => session.businessIds.includes(business.id))
-        : businesses,
-    );
+    // Filtered by the same predicate `assertBusinessAccess` enforces, rather
+    // than by a role check of its own: the staff checkout builds its "Redeeming
+    // at" list from this, so anything listed here and refused there is a dead
+    // end the operator cannot diagnose.
+    return ok(businesses.filter((business) => canAccessBusiness(session, business.id)));
   } catch (error) {
     return fail(error);
   }

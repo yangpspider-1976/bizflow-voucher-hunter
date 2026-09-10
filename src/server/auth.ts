@@ -56,17 +56,31 @@ export async function requireAdmin(request: Request) {
   return { email: "integration", name: "API Admin", role: "super_admin" as const, businessIds: ["*"], exp: 0 };
 }
 
+/**
+ * Whether this session may act on `businessId`.
+ *
+ * Split out of `assertBusinessAccess` so that anything *offering* a business —
+ * a checkout's "Redeeming at" list, say — can filter by exactly the rule that
+ * will judge the request. When the two were written separately they diverged:
+ * `/api/businesses` narrowed only `staff`, so a scoped `admin` was offered
+ * every partner in the network and got a 403 on the ones outside its own scope.
+ */
+export function canAccessBusiness(
+  session: Pick<Awaited<ReturnType<typeof requireAdmin>>, "role" | "businessIds">,
+  businessId: string,
+) {
+  return (
+    session.role === "super_admin" ||
+    (session.role === "admin" && session.businessIds.includes("*")) ||
+    session.businessIds.includes(businessId)
+  );
+}
+
 export function assertBusinessAccess(
   session: Awaited<ReturnType<typeof requireAdmin>>,
   businessId: string,
 ) {
-  if (
-    session.role === "super_admin" ||
-    (session.role === "admin" && session.businessIds.includes("*")) ||
-    session.businessIds.includes(businessId)
-  ) {
-    return;
-  }
+  if (canAccessBusiness(session, businessId)) return;
   throw new AppError("E-STAFF-BUSINESS-SCOPE", "You are not allowed to access this business", 403);
 }
 
