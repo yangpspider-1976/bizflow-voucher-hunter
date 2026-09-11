@@ -968,7 +968,10 @@ export async function listSlotsForAttempt(input: { campaignSlug: string; phone: 
       user.id
     ]);
     if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
-    const attempt = mapAttempt(attemptRow);
+    const attempt = asOfNow(mapAttempt(attemptRow));
+    // Refused here rather than at the claim, so the customer finds out before
+    // choosing a time and typing their details, not after.
+    if (attempt.status === "Expired") throw candidateExpired(campaign);
     const slots = (
       await all(
         tx,
@@ -986,7 +989,7 @@ export async function listSlotsForAttempt(input: { campaignSlug: string; phone: 
   });
 }
 
-export function selectFinalVoucher(input: {
+export async function selectFinalVoucher(input: {
   campaignSlug: string;
   attemptId: string;
   slotId: string;
@@ -996,6 +999,11 @@ export function selectFinalVoucher(input: {
   email?: string;
   guestCount?: number;
 }) {
+  // Committed on its own, ahead of the claim. The claim's transaction expires
+  // candidates too, but a claim refused for that very expiry rolls it back —
+  // the candidate stayed `Candidate`, its stock stayed held, and every retry
+  // was refused again.
+  await expireOldCandidates();
   return withTx(async (tx) => {
     const campaign = await getCampaignOrThrow(tx, input.campaignSlug);
     const user = await findOrCreateUser(tx, campaign.id, input.phone, input.sessionId, input.name, input.email);
@@ -1011,12 +1019,12 @@ export function selectFinalVoucher(input: {
     ]);
     if (!attemptRow) throw new AppError("E-ATTEMPT-404", "Selected candidate was not found", 404);
     const attempt = mapAttempt(attemptRow);
+    // Checked before the general state test: expireCandidates above has just
+    // marked a lapsed candidate Expired, and reporting that as "no longer
+    // available" told the customer nothing about why, or what to do.
+    if (asOfNow(attempt).status === "Expired") throw candidateExpired(campaign);
     if (attempt.status !== "Candidate" && attempt.status !== "Held") {
-      throw new AppError("E-ATTEMPT-STATE", "Selected candidate is no longer available", 409);
-    }
-    if (new Date(attempt.expiresAt).getTime() < Date.now()) {
-      await releaseAttempt(tx, attempt);
-      throw new AppError("E-ATTEMPT-EXPIRED", "Selected candidate has expired", 409);
+      throw new AppError("E-ATTEMPT-STATE", "This voucher can no longer be claimed", 409);
     }
 
     const slot = await getSlotOrThrow(tx, input.slotId, campaign.id);
@@ -1237,6 +1245,31 @@ async function releaseAttempt(db: Exec, attempt: VoucherAttempt) {
     );
     await run(db, "UPDATE attempts SET status = 'Released' WHERE id = ?", [attempt.id]);
   }
+}
+
+/**
+ * An attempt as it stands now: a candidate past its hold reads Expired, whether
+ * or not `expireCandidates` has written that down yet.
+ *
+ * Nothing records the expiry on a timer. It is written only when a draw or a
+ * claim commits, so on a quiet campaign a lapsed candidate stayed `Candidate`
+ * in the table — and the snapshot handed it to the app as a live option. The
+ * customer picked it, chose a time, typed their name, and was refused.
+ */
+function asOfNow(attempt: VoucherAttempt): VoucherAttempt {
+  const held = attempt.status === "Candidate" || attempt.status === "Held";
+  return held && new Date(attempt.expiresAt).getTime() < Date.now()
+    ? { ...attempt, status: "Expired" }
+    : attempt;
+}
+
+function candidateExpired(campaign: Campaign) {
+  const minutes = campaign.candidateTimeoutMinutes;
+  return new AppError(
+    "E-ATTEMPT-EXPIRED",
+    `This voucher expired before it was claimed. A voucher you win is held for ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+    409
+  );
 }
 
 /** Expire timed-out candidates and return their held stock. Runs inside a caller transaction. */
@@ -1484,8 +1517,10 @@ async function levelAttemptFields(db: Exec, campaign: Campaign, user: EndUser) {
 }
 
 async function huntState(db: Exec, campaign: Campaign, user: EndUser) {
+  // As of now, not as last written: this is a read transaction and cannot
+  // record an expiry, and the app offers whatever this calls a Candidate.
   const attempts = (await all(db, "SELECT * FROM attempts WHERE campaign_id = ? AND user_id = ?", [campaign.id, user.id])).map(
-    mapAttempt
+    (row) => asOfNow(mapAttempt(row))
   );
   const voucherRow = await one(db, "SELECT * FROM vouchers WHERE campaign_id = ? AND user_id = ?", [campaign.id, user.id]);
   const voucher = voucherRow ? mapVoucher(voucherRow) : undefined;
