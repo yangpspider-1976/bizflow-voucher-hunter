@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { slotHasEnded } from "@bizflow/shared";
 import type { Client, Transaction } from "@/server/pg-driver";
 import { generateQrToken, generateVoucherCode } from "@/server/codes";
 import { assertDevToolsEnabledFor, devToolsEnabledFor } from "@/server/dev-tools";
@@ -119,6 +120,9 @@ async function getSlotOrThrow(db: Exec, slotId: string, campaignId: string) {
   const row = await one(db, "SELECT * FROM slots WHERE id = ? AND campaign_id = ?", [slotId, campaignId]);
   if (!row) throw new AppError("E-SLOT-404", "Selected slot was not found", 404);
   const slot = mapSlot(row);
+  if (slotHasEnded(slot)) {
+    throw new AppError("E-SLOT-EXPIRED", "Selected time slot has ended. Please choose another time.", 409);
+  }
   if (slot.status !== "active" || slot.remainingCapacity <= 0) {
     throw new AppError("E-SLOT-SOLD-OUT", "Selected slot is sold out", 409);
   }
@@ -977,14 +981,14 @@ export async function listSlotsForAttempt(input: { campaignSlug: string; phone: 
         tx,
         `SELECT s.* FROM slots s
          JOIN pool_slots ps ON ps.slot_id = s.id
-         WHERE ps.pool_id = ? AND s.campaign_id = ? AND s.date >= ?
+         WHERE ps.pool_id = ? AND s.campaign_id = ?
          ORDER BY s.date, s.start_time`,
-        [attempt.poolId, campaign.id, manilaDateString()]
+        [attempt.poolId, campaign.id]
       )
     ).map(mapSlot);
     return {
       attempt,
-      slots: slots.map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
+      slots: slots.filter((slot) => !slotHasEnded(slot)).map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }))
     };
   });
 }

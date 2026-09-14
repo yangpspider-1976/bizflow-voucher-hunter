@@ -11,4 +11,5 @@ export * from "./gamification";
 export * from "./maps";
 export * from "./phone";
 export * from "./phone-display";
+export * from "./slot-time";
 export * from "./voucher-presentation";

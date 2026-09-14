@@ -1,6 +1,7 @@
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { slotHasEnded } from "@bizflow/shared";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, AppState, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ApiError, getAttemptSlots, type PublicSlot } from "@/api/client";
@@ -43,6 +44,11 @@ export default function DateTimeScreen() {
   }, [huntWasEntered, returnToLanding]);
 
   const [slots, setSlots] = useState<PublicSlot[]>([]);
+  const [now, setNow] = useState(() => new Date());
+  const availableSlots = useMemo(
+    () => slots.filter((slot) => !slotHasEnded(slot, now)),
+    [slots, now],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   // Kept apart from `error` because the two need opposite affordances: `error`
@@ -137,9 +143,35 @@ export default function DateTimeScreen() {
     }
   }, [begin, flow.selectedAttemptId, router, save, slug, t, token]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     void load();
-  }, [load]);
+    // Slot times have minute precision. Refresh at each minute boundary and
+    // immediately after returning from the background or another screen.
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      clearTimeout(timer);
+      setNow(new Date());
+      timer = setTimeout(tick, 60_000 - (Date.now() % 60_000));
+    };
+    tick();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") tick();
+    });
+    return () => {
+      clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [load]));
+
+  const selectedSlot = availableSlots.find((slot) => slot.id === flow.selectedSlotId);
+  const canContinue = !loading && !!selectedSlot &&
+    selectedSlot.status === "active" && selectedSlot.remainingCapacity > 0;
+
+  useEffect(() => {
+    if (!loading && flow.selectedSlotId && !selectedSlot) {
+      save({ selectedSlotId: "", selectedDate: "" });
+    }
+  }, [flow.selectedSlotId, loading, save, selectedSlot]);
 
   if (!flow.selectedAttemptId) {
     return (
@@ -161,7 +193,7 @@ export default function DateTimeScreen() {
     );
   }
 
-  const dates = Array.from(new Set(slots.map((slot) => slot.date)));
+  const dates = Array.from(new Set(availableSlots.map((slot) => slot.date)));
   const selectedLabel = selectedAttempt
     ? voucherDisplayLabel(t, selectedAttempt)
     : "";
@@ -196,7 +228,7 @@ export default function DateTimeScreen() {
               {t("results.returnCampaign")}
             </Button>
           </InfoCard>
-        ) : slots.length === 0 ? (
+        ) : availableSlots.length === 0 ? (
           error ? null : (
             <InfoCard>
               <Text style={styles.infoText}>
@@ -211,7 +243,7 @@ export default function DateTimeScreen() {
                 {formatDate(date, localeFor(language))}
               </Text>
               <View style={styles.slotList}>
-                {slots
+                {availableSlots
                   .filter((slot) => slot.date === date)
                   .map((slot) => {
                     const soldOut =
@@ -230,9 +262,13 @@ export default function DateTimeScreen() {
                                   count: slot.remainingCapacity,
                                 })
                         }
-                        onPress={() =>
-                          save({ selectedSlotId: slot.id, selectedDate: slot.date })
-                        }
+                        onPress={() => {
+                          if (slotHasEnded(slot)) {
+                            setNow(new Date());
+                            return;
+                          }
+                          save({ selectedSlotId: slot.id, selectedDate: slot.date });
+                        }}
                         selected={slot.id === flow.selectedSlotId}
                         soldOut={soldOut}
                         time={`${formatTime(
@@ -259,10 +295,14 @@ export default function DateTimeScreen() {
         {expired ? null : (
           <View style={styles.action}>
             <Button
-              disabled={!flow.selectedSlotId}
-              onPress={() =>
-                router.push({ pathname: "/campaign/[slug]/confirm", params: { slug } })
-              }
+              disabled={!canContinue}
+              onPress={() => {
+                if (!canContinue || !selectedSlot || slotHasEnded(selectedSlot)) {
+                  setNow(new Date());
+                  return;
+                }
+                router.push({ pathname: "/campaign/[slug]/confirm", params: { slug } });
+              }}
             >
               {t("common.continue")}
             </Button>
