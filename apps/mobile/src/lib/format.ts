@@ -108,8 +108,7 @@ export function voucherDisplayLabel(t: Translate, benefit: Benefit) {
     return t("voucher.fixedAmount", { value: benefit.benefitValue });
   }
   if (benefit.benefitType === "free_shipping") return t("voucher.freeShipping");
-  if (/dessert/i.test(benefit.displayLabel)) return t("voucher.freeDessert");
-  return t("voucher.freeItem");
+  return benefit.displayLabel.trim() || t("voucher.freeItem");
 }
 
 export function voucherDetail(t: Translate, benefit: Benefit) {

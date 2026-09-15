@@ -120,14 +120,22 @@ export function VoucherTicket({
           <View style={styles.codeBlock}>
             <Text style={[styles.codeLabel, { color: rarity.text }]}>{t("voucher.code")}</Text>
             <View style={styles.codeRow}>
-              <Text style={[styles.code, { color: rarity.headingText }]}>{code}</Text>
+              <Text
+                adjustsFontSizeToFit
+                numberOfLines={1}
+                style={[styles.code, { color: rarity.headingText }]}
+              >
+                {code}
+              </Text>
               {copyable ? (
-                <CopyButton
-                  color={rarity.headingText}
-                  label={t("voucher.code")}
-                  size={18}
-                  value={code}
-                />
+                <View style={styles.copyButton}>
+                  <CopyButton
+                    color={rarity.headingText}
+                    label={t("voucher.code")}
+                    size={18}
+                    value={code}
+                  />
+                </View>
               ) : null}
             </View>
           </View>
@@ -233,10 +241,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   code: {
-    fontFamily: fonts.black,
-    fontSize: 22,
-    letterSpacing: 1.6,
+    flex: 1,
+    minWidth: 0,
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    letterSpacing: 0.3,
     marginTop: 2,
+  },
+  copyButton: {
+    flexShrink: 0,
   },
   footnote: {
     fontFamily: fonts.regular,

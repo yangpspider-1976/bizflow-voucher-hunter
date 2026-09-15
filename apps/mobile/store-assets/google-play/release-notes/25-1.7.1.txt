@@ -1,0 +1,7 @@
+<en-US>
+Small fixes to vouchers and booking.
+
+• Booking no longer offers time slots that have already passed
+• Long voucher codes now fit on the ticket, with the copy button always visible
+• Free-item vouchers show the actual item instead of a generic label
+</en-US>
