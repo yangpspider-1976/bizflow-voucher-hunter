@@ -1,4 +1,4 @@
-import { dashboardMetrics } from "@/server/voucher-engine";
+import { campaignSlotPerformance, type SlotPerformance } from "@/server/voucher-engine";
 import { ChangeRequestActions } from "../_components/ChangeRequestActions";
 import { FlashNotice } from "../_components/FlashNotice";
 import { FormLink } from "../_components/FormLink";
@@ -39,10 +39,8 @@ export default async function SlotsPage({
       ? listChangeRequests(selectedCampaign.id, "slot_create")
       : Promise.resolve([]),
     selectedCampaign
-      ? dashboardMetrics(selectedCampaign.id)
-          .then((metrics) => metrics.slotPerformance)
-          .catch(() => [] as Awaited<ReturnType<typeof dashboardMetrics>>["slotPerformance"])
-      : Promise.resolve([] as Awaited<ReturnType<typeof dashboardMetrics>>["slotPerformance"]),
+      ? campaignSlotPerformance(selectedCampaign.id).catch(() => [] as SlotPerformance[])
+      : Promise.resolve([] as SlotPerformance[]),
   ]);
 
   // The form is on its own route now, so the scope has to travel with the link.

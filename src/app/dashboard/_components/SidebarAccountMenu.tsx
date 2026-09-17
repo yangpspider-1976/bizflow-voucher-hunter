@@ -61,6 +61,8 @@ export function SidebarAccountMenu({
   const itemRefs = useRef<Array<HTMLElement | null>>([]);
 
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const [placement, setPlacement] = useState<{
     left: number;
     bottom: number;
@@ -106,13 +108,28 @@ export function SidebarAccountMenu({
   // open. Scroll is listened for on the capture phase because scroll events do
   // not bubble — that catches the sidebar's own scrolling as well as the
   // page's, without having to find the scroll container first.
+  //
+  // Coalesced onto an animation frame: capture-phase scroll fires for every
+  // scrollable ancestor and can arrive many times per frame, and `place` both
+  // reads layout (`getBoundingClientRect`) and sets state. Unthrottled that was
+  // a forced reflow plus a React render per event, with only the last one of
+  // each frame able to affect what is painted.
   useEffect(() => {
     if (!open) return;
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        place();
+      });
+    };
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
     return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
     };
   }, [open, place]);
 
@@ -144,10 +161,34 @@ export function SidebarAccountMenu({
     }
   }
 
+  /**
+   * Signing out, with the two things the bare `await fetch(...)` did not do.
+   *
+   * A rejected fetch (offline, or the request cut off mid-flight) left an
+   * unhandled rejection and the handler simply stopped: no navigation, no
+   * message, the menu still open — indistinguishable from a click that missed.
+   * And a non-OK response fell straight through to `/login` anyway, so a server
+   * that failed to clear the cookie showed a signed-out screen over a session
+   * that was still live.
+   *
+   * Either way the local state is now the honest one: navigate only when the
+   * server says the session is gone, and say so when it is not.
+   */
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.replace("/login");
-    router.refresh();
+    if (signingOut) return;
+    setSigningOut(true);
+    setLogoutError("");
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Sign out failed");
+      router.replace("/login");
+      router.refresh();
+    } catch {
+      setSigningOut(false);
+      setLogoutError("Could not sign out. Check your connection and try again.");
+    }
+    // Deliberately not cleared on success: the navigation is in flight and
+    // re-enabling the button would invite a second POST against a dead session.
   }
 
   return (
@@ -198,6 +239,7 @@ export function SidebarAccountMenu({
             </a>
             <button
               className="sidebar-account-item"
+              disabled={signingOut}
               onClick={logout}
               ref={(node) => {
                 itemRefs.current[1] = node;
@@ -205,10 +247,16 @@ export function SidebarAccountMenu({
               role="menuitem"
               type="button"
             >
-              Sign out
+              {signingOut ? "Signing out…" : "Sign out"}
               <FiLogOut aria-hidden="true" />
             </button>
           </div>
+
+          {logoutError ? (
+            <p className="sidebar-account-error" role="alert">
+              {logoutError}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

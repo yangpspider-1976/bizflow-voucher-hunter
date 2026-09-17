@@ -116,6 +116,33 @@ async function getCampaignOrThrow(db: Exec, key: string) {
   return campaign;
 }
 
+/**
+ * The campaign as the console sees it: found or not found, with no opinion on
+ * whether it is currently running.
+ *
+ * `getCampaignOrThrow` additionally demands `status === "active"`, which is
+ * right for every hunt path — a paused campaign must not hand out another
+ * voucher. It is wrong for the dashboard, which is where a campaign is paused
+ * *from* and where its history is read afterwards. Routed through the active
+ * gate, every dashboard read for a paused or closed campaign threw
+ * E-CAMPAIGN-404, and the pages' `.catch()` fallbacks turned that into an empty
+ * table: the slot list, the benefit tiers and every metric card read zero for a
+ * campaign that was merely not running, with nothing on screen saying why. The
+ * scope picker offers paused campaigns like any other and sorts by start date,
+ * so a business whose newest campaign was paused opened on a blank dashboard by
+ * default.
+ *
+ * A campaign that does not exist at all still 404s, so a bad `?campaign=` is
+ * rejected exactly as before.
+ */
+async function getDashboardCampaignOrThrow(db: Exec, key: string) {
+  const campaign = await campaignByIdOrSlug(db, key);
+  if (!campaign) {
+    throw new AppError("E-CAMPAIGN-404", "Campaign is not available", 404);
+  }
+  return campaign;
+}
+
 async function getSlotOrThrow(db: Exec, slotId: string, campaignId: string) {
   const row = await one(db, "SELECT * FROM slots WHERE id = ? AND campaign_id = ?", [slotId, campaignId]);
   if (!row) throw new AppError("E-SLOT-404", "Selected slot was not found", 404);
@@ -1689,33 +1716,116 @@ export async function resetHuntForPhone(input: { phone: string }) {
 
 const METRIC_EVENTS = ["campaign_page_view", "hunt_started", "voucher_candidate_generated"] as const;
 
+/** A row as the driver hands it back: column names, values still untyped. */
+type RollupRow = Record<string, unknown>;
+
+/** One slot with the counts the console draws next to it. */
+export type SlotPerformance = {
+  slot: CampaignSlot & { remainingPoolQuantity: number };
+  issued: number;
+  attempts: number;
+  redeemed: number;
+};
+
 /**
- * Every dashboard page that is scoped to a campaign renders from this, so it is
- * on the critical path of most navigations.
+ * The three statements the per-slot table is built from, as one batch.
  *
- * The rollups run as one batch rather than one statement each: against remote
- * libSQL each statement is a network round trip, and this used to pay nine of
- * them in sequence. The counting is left to SQL for the same reason the reads
- * are batched — loading every voucher and attempt row only to `.filter()` them
- * in JS made the response grow with the campaign's whole history.
+ * Shared by `dashboardMetrics` and `campaignSlotPerformance` so the two cannot
+ * drift, but kept as statement descriptors rather than as a function that runs
+ * them: `dashboardMetrics` folds them into its own six-statement batch, and
+ * splitting them out would cost it an extra network round trip against remote
+ * libSQL to save nothing.
+ */
+function slotRollupStatements(campaignId: string) {
+  return [
+    { sql: "SELECT * FROM slots WHERE campaign_id = ?", args: [campaignId] },
+    {
+      sql: `SELECT slot_id,
+                   COUNT(*) AS issued,
+                   SUM(CASE WHEN status = 'Redeemed' THEN 1 ELSE 0 END) AS redeemed
+            FROM vouchers WHERE campaign_id = ? GROUP BY slot_id`,
+      args: [campaignId],
+    },
+    {
+      sql: "SELECT slot_id, COUNT(*) AS attempts FROM attempts WHERE campaign_id = ? GROUP BY slot_id",
+      args: [campaignId],
+    },
+  ];
+}
+
+/**
+ * Assembles the per-slot rows from the three rollups above.
+ *
+ * Benefit pools are campaign-level, so a slot's "remaining" is its own capacity.
+ */
+function buildSlotPerformance(
+  slotRows: RollupRow[],
+  voucherRollup: RollupRow[],
+  attemptRollup: RollupRow[],
+): {
+  rows: SlotPerformance[];
+  vouchersBySlot: Map<string, { issued: number; redeemed: number }>;
+  attemptsBySlot: Map<string | null, number>;
+} {
+  const vouchersBySlot = new Map(
+    voucherRollup.map((row) => [
+      row.slot_id as string,
+      { issued: Number(row.issued), redeemed: Number(row.redeemed ?? 0) },
+    ]),
+  );
+  const attemptsBySlot = new Map(
+    attemptRollup.map((row) => [row.slot_id as string | null, Number(row.attempts)]),
+  );
+  const rows = slotRows
+    .map(mapSlot)
+    .map((slot) => ({
+      slot: { ...slot, remainingPoolQuantity: slot.remainingCapacity },
+      issued: vouchersBySlot.get(slot.id)?.issued ?? 0,
+      attempts: attemptsBySlot.get(slot.id) ?? 0,
+      redeemed: vouchersBySlot.get(slot.id)?.redeemed ?? 0,
+    }));
+  return { rows, vouchersBySlot, attemptsBySlot };
+}
+
+/**
+ * Just the per-slot table, for the pages that draw only that.
+ *
+ * Slots, Vouchers and the new-tier form each called `dashboardMetrics` and read
+ * `slotPerformance` off it, paying for the benefit rollup, the analytics event
+ * counts and the no-show count as well — three statements of six, on the
+ * critical path of three navigations, discarded on arrival.
+ */
+export async function campaignSlotPerformance(
+  campaignId: string,
+): Promise<SlotPerformance[]> {
+  const db = await getDb();
+  const campaign = await getDashboardCampaignOrThrow(db, campaignId);
+  const [slotRows, voucherRollup, attemptRollup] = await batchAll(
+    db,
+    slotRollupStatements(campaign.id),
+  );
+  return buildSlotPerformance(slotRows, voucherRollup, attemptRollup).rows;
+}
+
+/**
+ * The campaign overview: the per-slot table plus the figures beside it.
+ *
+ * On the critical path of the dashboard's own page, so the rollups run as one
+ * batch rather than one statement each: against remote libSQL each statement is
+ * a network round trip, and this used to pay nine of them in sequence. The
+ * counting is left to SQL for the same reason the reads are batched — loading
+ * every voucher and attempt row only to `.filter()` them in JS made the
+ * response grow with the campaign's whole history.
+ *
+ * Pages that draw only the slot table should call `campaignSlotPerformance`
+ * instead; it is the first three of these six statements and nothing else.
  */
 export async function dashboardMetrics(campaignId: string) {
   const db = await getDb();
-  const campaign = await getCampaignOrThrow(db, campaignId);
+  const campaign = await getDashboardCampaignOrThrow(db, campaignId);
   const [slotRows, voucherRollup, attemptRollup, benefitRollup, eventRollup, noShowRows] =
     await batchAll(db, [
-      { sql: "SELECT * FROM slots WHERE campaign_id = ?", args: [campaign.id] },
-      {
-        sql: `SELECT slot_id,
-                     COUNT(*) AS issued,
-                     SUM(CASE WHEN status = 'Redeemed' THEN 1 ELSE 0 END) AS redeemed
-              FROM vouchers WHERE campaign_id = ? GROUP BY slot_id`,
-        args: [campaign.id],
-      },
-      {
-        sql: "SELECT slot_id, COUNT(*) AS attempts FROM attempts WHERE campaign_id = ? GROUP BY slot_id",
-        args: [campaign.id],
-      },
+      ...slotRollupStatements(campaign.id),
       {
         // MIN(seq) preserves the order benefits were first drawn in, which is
         // the order this list has always rendered in.
@@ -1737,20 +1847,8 @@ export async function dashboardMetrics(campaignId: string) {
       },
     ]);
 
-  // Benefit pools are campaign-level; a slot's "remaining" is its own capacity.
-  const slots = slotRows
-    .map(mapSlot)
-    .map((slot) => ({ ...slot, remainingPoolQuantity: slot.remainingCapacity }));
-
-  const vouchersBySlot = new Map(
-    voucherRollup.map((row) => [
-      row.slot_id as string,
-      { issued: Number(row.issued), redeemed: Number(row.redeemed ?? 0) },
-    ]),
-  );
-  const attemptsBySlot = new Map(
-    attemptRollup.map((row) => [row.slot_id as string | null, Number(row.attempts)]),
-  );
+  const { rows: slotPerformance, vouchersBySlot, attemptsBySlot } =
+    buildSlotPerformance(slotRows, voucherRollup, attemptRollup);
   const eventCounts = new Map(
     eventRollup.map((row) => [row.event_name as string, Number(row.c)]),
   );
@@ -1770,12 +1868,7 @@ export async function dashboardMetrics(campaignId: string) {
       redemptions,
       noShows: Number(noShowRows[0]?.c ?? 0)
     },
-    slotPerformance: slots.map((slot) => ({
-      slot,
-      issued: vouchersBySlot.get(slot.id)?.issued ?? 0,
-      attempts: attemptsBySlot.get(slot.id) ?? 0,
-      redeemed: vouchersBySlot.get(slot.id)?.redeemed ?? 0
-    })),
+    slotPerformance,
     benefitPerformance: benefitRollup.map((row) => ({
       label: String(row.display_label),
       generated: Number(row.generated),
@@ -1794,14 +1887,25 @@ function csvSection(title: string, headers: string[], rows: unknown[][]) {
 
 export async function exportCampaignCsv(campaignId: string) {
   const db = await getDb();
-  const campaign = await getCampaignOrThrow(db, campaignId);
+  // Reached from the dashboard's Export button, so it reads a paused or closed
+  // campaign's history like every other console read — see
+  // getDashboardCampaignOrThrow.
+  const campaign = await getDashboardCampaignOrThrow(db, campaignId);
 
-  const users = (await all(db, "SELECT * FROM users WHERE campaign_id = ?", [campaign.id])).map(mapUser);
+  // Four independent table reads. They ran one after another, so the export
+  // paid four sequential round trips before it could look at a single row.
+  const [userRows, slotRows, attemptRows, voucherRows] = await batchAll(db, [
+    { sql: "SELECT * FROM users WHERE campaign_id = ?", args: [campaign.id] },
+    { sql: "SELECT * FROM slots WHERE campaign_id = ?", args: [campaign.id] },
+    { sql: "SELECT * FROM attempts WHERE campaign_id = ?", args: [campaign.id] },
+    { sql: "SELECT * FROM vouchers WHERE campaign_id = ?", args: [campaign.id] },
+  ]);
+  const users = userRows.map(mapUser);
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const slots = (await all(db, "SELECT * FROM slots WHERE campaign_id = ?", [campaign.id])).map(mapSlot);
+  const slots = slotRows.map(mapSlot);
   const slotsById = new Map(slots.map((slot) => [slot.id, slot]));
-  const attempts = (await all(db, "SELECT * FROM attempts WHERE campaign_id = ?", [campaign.id])).map(mapAttempt);
-  const vouchers = (await all(db, "SELECT * FROM vouchers WHERE campaign_id = ?", [campaign.id])).map(mapVoucher);
+  const attempts = attemptRows.map(mapAttempt);
+  const vouchers = voucherRows.map(mapVoucher);
   const vouchersById = new Map(vouchers.map((voucher) => [voucher.id, voucher]));
   const redemptions = vouchers.length
     ? (

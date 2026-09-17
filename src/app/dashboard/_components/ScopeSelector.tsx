@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useMemo, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { campaignCategoryIcon } from "@/lib/campaign-category";
 import type { Business, Campaign } from "@/types/voucher";
@@ -35,12 +36,17 @@ export function ScopeSelector({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [switching, startSwitch] = useTransition();
 
   const business =
     businesses.find((item) => item.id === selectedBusinessId) ?? businesses[0];
-  const scopedCampaigns = business
-    ? campaigns.filter((campaign) => campaign.businessId === business.id)
-    : campaigns;
+  const scopedCampaigns = useMemo(
+    () =>
+      business
+        ? campaigns.filter((campaign) => campaign.businessId === business.id)
+        : campaigns,
+    [business, campaigns],
+  );
   const campaign =
     scopedCampaigns.find((item) => item.slug === selectedCampaignSlug) ??
     scopedCampaigns[0];
@@ -48,8 +54,16 @@ export function ScopeSelector({
   // Client-side navigation, not window.location.assign: changing scope only
   // needs the page's server components re-rendered with new search params, and
   // a full document load threw away the whole dashboard bundle each time.
+  //
+  // Inside a transition so the round trip has a visible state. Without one the
+  // tiles snapped back to the old scope the instant the menu closed and sat
+  // there until the server answered — on a slow campaign that reads as a click
+  // that did nothing, and invites a second one against a navigation already in
+  // flight.
   function navigate(params: URLSearchParams) {
-    router.push(`${pathname}?${params.toString()}`);
+    startSwitch(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
   }
 
   function onBusinessChange(businessId: string) {
@@ -68,6 +82,18 @@ export function ScopeSelector({
     navigate(params);
   }
 
+  // Rebuilt only when their source list changes. SelectMenu takes `options` as
+  // a prop and derives the selected and active rows from it, so a fresh array
+  // on every render invalidated that work for nothing.
+  const businessOptions = useMemo(
+    () => businesses.map((item) => ({ value: item.id, label: item.name })),
+    [businesses],
+  );
+  const campaignOptions = useMemo(
+    () => scopedCampaigns.map((item) => ({ value: item.slug, label: item.title })),
+    [scopedCampaigns],
+  );
+
   // A single option is shown but not made switchable. Hiding it outright left
   // the page silent about what it was scoped to — a campaign's slots looked
   // like the business's slots.
@@ -78,17 +104,15 @@ export function ScopeSelector({
   const category = campaign?.industry ?? campaign?.mode ?? "other";
 
   return (
-    <div className="scope-selector">
+    <div aria-busy={switching || undefined} className="scope-selector">
       {showBusinessScope ? (
         <ScopeTile
           category={business?.industry ?? "other"}
           icon={campaignCategoryIcon(business?.industry ?? "other")}
           label="Business"
           onChange={onBusinessChange}
-          options={businesses.map((item) => ({
-            value: item.id,
-            label: item.name,
-          }))}
+          options={businessOptions}
+          pending={switching}
           selectLabel="Viewing business"
           value={business?.id ?? ""}
           valueLabel={business?.name ?? "All businesses"}
@@ -101,10 +125,8 @@ export function ScopeSelector({
         <ScopeTile
           label="Campaign"
           onChange={onCampaignChange}
-          options={scopedCampaigns.map((item) => ({
-            value: item.slug,
-            label: item.title,
-          }))}
+          options={campaignOptions}
+          pending={switching}
           selectLabel="Viewing campaign"
           value={campaign?.slug ?? ""}
           valueLabel={campaign?.title ?? "No campaigns"}
@@ -125,6 +147,7 @@ function ScopeTile({
   label,
   onChange,
   options,
+  pending,
   selectLabel,
   value,
   valueLabel,
@@ -134,6 +157,16 @@ function ScopeTile({
   label: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
+  /**
+   * A scope switch is in flight. The tile still reads the old scope until the
+   * server's render lands, so it dims to say the click was heard.
+   *
+   * Deliberately not `disabled`: disabling the trigger moves focus off it, so a
+   * keyboard user who just changed scope would be dropped to the top of the
+   * document every time. Changing scope again mid-flight is legitimate anyway —
+   * the transition supersedes the earlier navigation.
+   */
+  pending?: boolean;
   selectLabel?: string;
   value?: string;
   valueLabel: string;
@@ -141,7 +174,7 @@ function ScopeTile({
   return (
     <SelectMenu
       ariaLabel={selectLabel}
-      className="scope-tile"
+      className={`scope-tile${pending ? " is-switching" : ""}`}
       onChange={onChange}
       options={options}
       renderValue={() => (

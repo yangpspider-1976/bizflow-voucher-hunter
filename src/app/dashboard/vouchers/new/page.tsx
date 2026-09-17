@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { filterCampaignsForSession } from "@/server/auth";
 import { listChangeRequests } from "@/server/change-requests";
-import { dashboardMetrics } from "@/server/voucher-engine";
+import { campaignSlotPerformance, type SlotPerformance } from "@/server/voucher-engine";
 import { FormPage } from "../../_components/FormPage";
 import { PoolForm, type PoolRequestDraft } from "../../_components/PoolForm";
 import { scopedHref, selectScope } from "../../_components/selectCampaign";
@@ -25,9 +25,9 @@ export default async function NewPoolPage({
   const returnHref = scopedHref("/dashboard/vouchers", scope.business?.id, campaign.slug);
   const isBusinessScoped = session?.role === "staff";
 
-  let slots: Awaited<ReturnType<typeof dashboardMetrics>>["slotPerformance"] = [];
+  let slots: SlotPerformance[] = [];
   try {
-    slots = (await dashboardMetrics(campaign.id)).slotPerformance;
+    slots = await campaignSlotPerformance(campaign.id);
   } catch {
     slots = [];
   }

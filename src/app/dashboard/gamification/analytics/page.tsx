@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentSession } from "@/server/dashboard-data";
 import {
@@ -40,7 +41,6 @@ export default async function GamificationAnalyticsPage({
     to: searchParams.to && DATE.test(searchParams.to) ? searchParams.to : fallback.to,
     partnerId: searchParams.partner || null,
   };
-  const kpis = await gamificationKpis(range);
   const csv = `/api/admin/gamification/analytics?format=csv&from=${range.from}&to=${range.to}`;
 
   return (
@@ -75,6 +75,43 @@ export default async function GamificationAnalyticsPage({
         </a>
       </form>
 
+      {/*
+        The heading, the nav and the date range are free — the range comes
+        straight off the query string. The figures under them are seven
+        rollups over the whole history (see maxDuration above), so they stream
+        in behind their own boundary rather than holding back the controls
+        used to ask for a different range.
+      */}
+      <Suspense
+        fallback={
+          <div className="admin-grid rewards-dashboard-grid" aria-busy="true">
+            {Array.from({ length: 4 }, (_, index) => (
+              <span
+                aria-hidden="true"
+                className="dashboard-loading-card span-3"
+                key={index}
+              />
+            ))}
+            <span className="dashboard-loading-panel span-12" aria-hidden="true" />
+          </div>
+        }
+        key={`${range.from}:${range.to}:${range.partnerId ?? ""}`}
+      >
+        <AnalyticsPanels range={range} />
+      </Suspense>
+    </>
+  );
+}
+
+/**
+ * Everything the rollups feed. Split out so the page shell does not wait on
+ * them — see the Suspense boundary above.
+ */
+async function AnalyticsPanels({ range }: { range: AnalyticsRange }) {
+  const kpis = await gamificationKpis(range);
+
+  return (
+    <>
       <div className="admin-grid rewards-dashboard-grid">
         {[
           ["Active players", kpis.engagement.activePlayers.toLocaleString()],

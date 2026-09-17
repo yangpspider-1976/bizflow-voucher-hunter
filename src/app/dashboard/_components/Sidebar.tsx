@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -190,6 +191,11 @@ export function Sidebar({
   const pathname = usePathname();
   const { navigate, pendingHref } = useRouteNavigation();
 
+  // Rebuilt only when the role does. The nav is otherwise re-derived — and with
+  // it every icon element in the tree — on each render, and this component
+  // re-renders on every navigation and every in-flight highlight change.
+  const sections = useMemo(() => visibleSections(role), [role]);
+
   // While a click is in flight the router still reports the old path, so the
   // row the cursor just left would keep the highlight and the page would look
   // like it had ignored the click. The destination wears it from the moment it
@@ -239,7 +245,7 @@ export function Sidebar({
         <strong>Voucher Hunt</strong>
       </Link>
       <nav className="sidebar-nav">
-        {visibleSections(role).map((section) => (
+        {sections.map((section) => (
           <div className="sidebar-nav-section" key={section.title}>
             <h2 className="sidebar-nav-section-title">{section.title}</h2>
             {section.items.map((item) => (

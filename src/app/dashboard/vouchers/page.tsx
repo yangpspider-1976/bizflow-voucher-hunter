@@ -6,7 +6,7 @@ import {
   type VoucherRarity,
 } from "@bizflow/shared";
 import { manilaDateString } from "@/server/db";
-import { dashboardMetrics } from "@/server/voucher-engine";
+import { campaignSlotPerformance, type SlotPerformance } from "@/server/voucher-engine";
 import { ChangeRequestActions } from "../_components/ChangeRequestActions";
 import { FlashNotice } from "../_components/FlashNotice";
 import { FormLink } from "../_components/FormLink";
@@ -66,20 +66,26 @@ export default async function VouchersPage({
       : Promise.resolve([]),
     selectedCampaign
       ? Promise.all([
-          dashboardMetrics(selectedCampaign.id).then((metrics) => metrics.slotPerformance),
+          campaignSlotPerformance(selectedCampaign.id),
           listPools(selectedCampaign.id),
         ]).catch(
-          () =>
-            [[], []] as [
-              Awaited<ReturnType<typeof dashboardMetrics>>["slotPerformance"],
-              Awaited<ReturnType<typeof listPools>>,
-            ],
+          () => [[], []] as [SlotPerformance[], Awaited<ReturnType<typeof listPools>>],
         )
       : Promise.resolve([[], []] as [
-          Awaited<ReturnType<typeof dashboardMetrics>>["slotPerformance"],
+          SlotPerformance[],
           Awaited<ReturnType<typeof listPools>>,
         ]),
   ]);
+  /**
+   * The campaign's slots by id, built once.
+   *
+   * Both helpers below resolve a tier's slot ids against this list, and both
+   * used to scan it with `.find()` per id — for every tier, on every render.
+   * A campaign with 20 tiers over 200 slots, each tier offered at 30 of them,
+   * walked the slot list 1,200 times for one table.
+   */
+  const slotsById = new Map(slotRows.map((row) => [row.slot.id, row.slot]));
+
   /**
    * Availability grouped by date rather than one entry per slot. A tier offered
    * at fifteen slots rendered as fifteen full timestamps, which wrapped over
@@ -89,12 +95,16 @@ export default async function VouchersPage({
     const byDate = new Map<string, string[]>();
     const unknown: string[] = [];
     for (const slotId of slotIds) {
-      const slot = slotRows.find((row) => row.slot.id === slotId)?.slot;
+      const slot = slotsById.get(slotId);
       if (!slot) {
         unknown.push(slotId);
         continue;
       }
-      byDate.set(slot.date, [...(byDate.get(slot.date) ?? []), slot.startTime]);
+      // Pushed into the held array rather than rebuilt around it: spreading the
+      // previous times back in copied the whole day's list per slot.
+      const held = byDate.get(slot.date);
+      if (held) held.push(slot.startTime);
+      else byDate.set(slot.date, [slot.startTime]);
     }
     const groups = [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -115,7 +125,7 @@ export default async function VouchersPage({
   const today = manilaDateString();
   const isBookable = (slotIds: string[]) =>
     slotIds.some((slotId) => {
-      const slot = slotRows.find((row) => row.slot.id === slotId)?.slot;
+      const slot = slotsById.get(slotId);
       return (
         slot !== undefined &&
         slot.date >= today &&

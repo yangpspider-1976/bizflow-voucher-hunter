@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 /**
  * Shared dashboard modal chrome: backdrop + centered dialog with a header.
@@ -18,9 +18,25 @@ export function AdminModal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  // Held in a ref so the effect below is scoped to the modal's lifetime rather
+  // than to the identity of a prop.
+  //
+  // Callers pass `onClose` inline (`onClose={() => setOpen(false)}`), so it is a
+  // new function on every render of the parent — and with it in the dependency
+  // list the effect tore down and re-ran on every keystroke inside the modal,
+  // detaching and re-attaching the keydown listener and re-reading the scroll
+  // lock each time. The lock itself survived that (cleanup and re-setup run in
+  // the same commit, with no paint between them to expose the gap), so this is
+  // not a fix for a visible bug; it is the effect saying what it means. Mount
+  // and unmount are when the lock should be taken and released, and reading the
+  // callback through the ref keeps Escape pointed at the latest one without
+  // tying the listener's lifetime to the parent's render count.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
     window.addEventListener("keydown", onKey);
     const previousOverflow = document.body.style.overflow;
@@ -29,7 +45,7 @@ export function AdminModal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div

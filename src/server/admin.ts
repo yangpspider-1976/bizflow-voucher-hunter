@@ -503,10 +503,18 @@ export async function listPools(campaignIdOrSlug: string): Promise<PoolWithSlots
       args: [campaign.id],
     },
   ]);
-  const pools = poolRows.map(mapPool);
-  return pools.map((pool) => ({
+  // Grouped in one pass rather than re-scanning every link per pool: that was
+  // pools x links comparisons, and both sides grow with the campaign.
+  const slotIdsByPool = new Map<string, string[]>();
+  for (const link of links) {
+    const poolId = String(link.pool_id);
+    const held = slotIdsByPool.get(poolId);
+    if (held) held.push(link.slot_id as string);
+    else slotIdsByPool.set(poolId, [link.slot_id as string]);
+  }
+  return poolRows.map(mapPool).map((pool) => ({
     ...pool,
-    slotIds: links.filter((l) => l.pool_id === pool.id).map((l) => l.slot_id as string)
+    slotIds: slotIdsByPool.get(pool.id) ?? [],
   }));
 }
 

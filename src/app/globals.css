@@ -2155,6 +2155,21 @@ a.sidebar-brand:focus-visible {
     color: var(--muted);
 }
 
+/* A sign-out that could not reach the server. Sits under the actions rather
+   than replacing them: the button stays there to be tried again. */
+.sidebar-account-item[disabled] {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.sidebar-account-error {
+    margin: 0;
+    padding: 0 14px 10px;
+    color: var(--red);
+    font-size: 0.74rem;
+    line-height: 1.35;
+}
+
 .admin-login-page {
     min-height: 100vh;
     min-height: 100dvh;
@@ -3829,6 +3844,15 @@ th {
 .scope-selector .campaign-page-selector:hover,
 .scope-selector .is-open .campaign-page-selector {
     background: var(--canvas);
+}
+
+/* A scope switch is in flight. The tile still reads the old scope — the value
+   only changes when the server's render arrives — so this is what separates
+   "asked for, still loading" from "the click did nothing". Still interactive:
+   see the `pending` prop in ScopeSelector for why it is not disabled. */
+.scope-selector > .scope-tile.is-switching .campaign-page-selector {
+    opacity: 0.65;
+    cursor: progress;
 }
 
 /* The panel belongs to the tile that opened it, so it is pinned to that tile's
