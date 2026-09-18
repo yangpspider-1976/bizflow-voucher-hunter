@@ -32,7 +32,7 @@ SHOTS = {
     "roulette": ("customer-03-roulette.png", "The reel mid-spin"),
     "datetime": ("customer-04-datetime.png", "Choosing a date and time slot"),
     "voucher": ("customer-05-voucher.png", "The issued voucher, with its QR code"),
-    "validate": ("staff-01-validate.png", "Staff Validation, with a code entered"),
+    "validate": ("staff-01-validate.png", "Scan & Redeem, with a code entered"),
     "awarded": ("staff-02-awarded.png", "The 5% confirmed at the counter"),
 }
 
@@ -136,9 +136,10 @@ def build():
     body(
         doc,
         "The campaign page shows the offer, the rules, your address, a map, and "
-        "a phone number to call you. One tap begins the hunt. Each customer gets "
-        "three spins per campaign, and can earn a few more by sharing a referral "
-        "link — capped daily, so it stays a game rather than a loophole.",
+        "a phone number to call you. One tap begins the hunt. You set how many "
+        "spins each customer gets in a campaign — three is the usual — and they "
+        "can earn a few more by sharing a referral link, capped daily, so it "
+        "stays a game rather than a loophole.",
     )
     shot(doc, "campaign")
 
@@ -146,8 +147,10 @@ def build():
     body(
         doc,
         "The reel spins and lands on a real prize from your campaign — say 30% "
-        "off. The odds are yours to set: make the deep discounts rare and the "
-        "everyday ones common.",
+        "off. The odds are yours to set: you give each prize a rarity, from "
+        "Standard through to Legendary, and that alone decides how often it "
+        "comes up. A Legendary prize is drawn a fiftieth as often as a Standard "
+        "one.",
     )
     for text, lead in [
         (
@@ -156,9 +159,10 @@ def build():
             "The app never offers a prize it cannot honour. ",
         ),
         (
-            "They can keep the prize in hand, or spend another spin chasing "
-            "better and risk ending up with less.",
-            "The customer chooses when to stop. ",
+            "Every spin they take adds another prize to choose from, and they "
+            "keep whichever they like best. Spinning again costs a spin, never "
+            "the prize already in hand.",
+            "Spins add up rather than replace. ",
         ),
     ]:
         bullet = doc.add_paragraph(style="List Bullet")
@@ -198,15 +202,16 @@ def build():
     doc.add_heading("Part 2 — At the counter", level=1)
     body(
         doc,
-        "Your staff need a phone, tablet or laptop, the dashboard, and a "
-        "four-digit PIN. There is nothing to install.",
+        "Your staff need a phone, tablet or laptop, the dashboard, and their own "
+        "sign-in — an email address and password we create for each person, "
+        "rather than a shared code. There is nothing to install.",
     )
 
     step(doc, 1, "Take the code")
     body(
         doc,
         "The customer shows their QR code, or reads out the voucher code. Your "
-        "staff scan it or type it into Staff Validation. The screen immediately "
+        "staff scan it or type it into Scan & Redeem. The screen immediately "
         "shows whether it is genuine: the discount, the customer's name, the "
         "booked date and time, and whether it has already been used. An expired "
         "or already-used voucher is refused on the spot.",
