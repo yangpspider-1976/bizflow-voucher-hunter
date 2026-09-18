@@ -582,17 +582,25 @@ def build():
     warning(
         doc,
         "Both actions below destroy data for everyone, immediately and "
-        "permanently. Every customer's vouchers, bookings, Loyalty Points and "
-        "history are gone, and every customer and dashboard user is signed out. "
-        "There is no undo and no backup taken for you.",
+        "permanently. Every campaign, business, slot, voucher pool and hunt log "
+        "goes, and with it every customer's vouchers, bookings and Loyalty "
+        "Points. There is no undo and no backup is taken for you.",
     )
     two_column_table(
         doc,
         [
-            ("Reset & Reseed Data", "Empties everything, then recreates the demo data. Type RESET to confirm. For a demo environment being put back to a known state."),
-            ("Wipe Data (No Reseed)", "Empties everything and leaves it empty. Type WIPE to confirm."),
+            ("Reset & Reseed Data", "Wipes all of it, then reloads the demo seed data. Type RESET to confirm. For a demo environment being put back to a known state."),
+            ("Wipe Data (No Reseed)", "The same wipe with nothing reloaded — no demo businesses, campaigns, products or customers. Type WIPE to confirm."),
         ],
         headers=["Action", "What it does"],
+    )
+    body(
+        doc,
+        "Super admin logins survive a wipe, so you can sign back in and build "
+        "the real data. Admin and staff logins do not: they are removed along "
+        "with the businesses they belonged to, and have to be created again "
+        "from Team.",
+        bold_lead="What survives. ",
     )
     body(
         doc,

@@ -3,76 +3,57 @@
 The four `scripts/build-*-guide.py` / `scripts/build-how-it-works-doc.py`
 builders embed any PNG in this folder whose filename appears in their `SHOTS`
 map, and print a placeholder line for anything missing. So capturing a shot is:
-drop the file here under the exact name below, re-run the builder, done. No
+put the file here under the exact name below, re-run the builder, done. No
 script changes.
-
-To re-run everything after adding images:
-
-```
-python scripts/build-customer-guide.py
-python scripts/build-staff-guide.py
-python scripts/build-admin-guide.py
-python scripts/build-how-it-works-doc.py
-```
 
 On this machine `python` is a Microsoft Store stub — use
 `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`.
 
-## Already captured
+## The dashboard shots are scripted
 
-`customer-01-directory` · `customer-02-campaign` · `customer-03-roulette` ·
-`customer-04-datetime` · `customer-05-voucher` · `staff-01-validate` ·
-`staff-02-awarded`
+`scripts/capture-guide-screenshots.mjs` takes all 13 of them. Re-run it after
+any dashboard UI change rather than re-cropping by hand:
 
-## Still needed
+```
+# 1. a database for it to seed into
+C:\Users\jiral\pgsql\bin\pg_ctl.exe start -D C:\Users\jiral\pgsql\data ^
+  -l C:\Users\jiral\pgsql\server.log -o "-p 55432"
+createdb -h 127.0.0.1 -p 55432 -U postgres voucher_hunt_shots
 
-Capture against seeded demo data, never production — these documents go to
-partners, and a real customer's name, number or spend must not travel with them.
+# 2. the app, pointed at it
+$env:DATABASE_URL="postgres://postgres@127.0.0.1:55432/voucher_hunt_shots"
+$env:ADMIN_SESSION_SECRET="<32+ chars>"
+npm run dev
 
-### Mobile — the customer app (4)
+# 3. the shots (VOUCHER_CODE = an issued, unredeemed voucher, for the
+#    validation-result panel; run a hunt against the seeded campaign to make one)
+$env:VOUCHER_CODE="BIZ-..."
+node scripts/capture-guide-screenshots.mjs
+```
 
-Portrait, one device, no status-bar clutter.
+It reads `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `STAFF_EMAIL` / `STAFF_PASSWORD`
+from the environment — the local `.env` sets all four. It signs in as staff for
+the staff-view shots and as super admin for the admin-view ones, because a shot
+taken under the wrong role shows a sidebar the guides say is not there.
+
+It also submits a slot request as staff on the way through. That is deliberate:
+it is what puts a Pending row on both `staff-06-requests` and
+`admin-05-requests`, so the two are the same request seen from each side.
+
+## Still needed — the customer app (4)
+
+These four are from the Android app and are **not** scripted. They need the
+emulator running a dev build against a local API, which is a longer job than
+the dashboard shots. Capture portrait, one device.
 
 | File | Where | State to set up |
 |---|---|---|
-| `customer-00-signin.png` | App launch | The sign-in screen, number typed in, before the code is sent |
-| `customer-06-more.png` | More tab | Signed in, with a non-zero LP balance so the wallet QR and daily rows are populated |
-| `customer-07-quests.png` | Quests tab | Daily tab, with at least one mission incomplete and one claimable |
-| `customer-08-shop.png` | LP Shop tab | Browse view, with at least two partners listed |
+| `customer-00-signin.png` | App launch | Sign-in screen, number typed, before the code is sent |
+| `customer-06-more.png` | More tab | Signed in, non-zero LP balance so the wallet QR and daily rows are populated |
+| `customer-07-quests.png` | Quests tab | Daily tab, at least one mission incomplete and one claimable |
+| `customer-08-shop.png` | LP Shop tab | Browse view, at least two partners listed |
 
-### Dashboard — staff view (4)
-
-Sign in as a **staff** account so the narrow sidebar is what appears. A shot
-taken as an admin will show links the staff guide says are not there.
-
-| File | Route | State to set up |
-|---|---|---|
-| `staff-00-login.png` | `/login` | Empty form. Also used by the admin guide |
-| `staff-03-result.png` | `/dashboard/staff` | A valid voucher validated, result panel showing, **before** Mark as Used |
-| `staff-04-dashboard.png` | `/dashboard` | Overview with real seeded numbers, not zeroes |
-| `staff-05-billing.png` | `/dashboard/billing` | A month with a statement to show |
-| `staff-06-requests.png` | `/dashboard/slots` | The "Your Slot Requests" panel with a row at Pending |
-
-### Dashboard — admin view (8)
-
-Sign in as a **super admin**, or `admin-06-team` and `admin-08-settings` will
-not exist.
-
-| File | Route | State to set up |
-|---|---|---|
-| `admin-01-business.png` | `/dashboard/businesses/new` | Part-filled, with the location picker open |
-| `admin-02-campaign.png` | `/dashboard/campaigns/new` | Part-filled, showing the date and mode fields |
-| `admin-03-slots.png` | `/dashboard/slots` | A campaign with several slots at different capacities |
-| `admin-04-pool.png` | `/dashboard/vouchers/new` | The tier form scrolled to the rarity field and the slot checkboxes |
-| `admin-05-requests.png` | `/dashboard/slots` | The "Staff Slot Requests" panel with a Pending row and its approve/reject actions |
-| `admin-06-team.png` | `/dashboard/team` | Several members across all three roles |
-| `admin-07-missions.png` | `/dashboard/gamification/missions` | The new-mission form with its cost simulation visible |
-| `admin-08-settings.png` | `/dashboard/settings` | Scrolled to show the Danger Zone and its typed confirmation |
-
-## Why these are not captured yet
-
-Running the dashboard locally needs `DATABASE_URL` pointing at PostgreSQL —
-`src/server/db.ts` throws "Database is not configured" otherwise, and there is
-no local-file mode. As of 2026-09-18 this machine has no PostgreSQL install and
-no Docker, so the app cannot be started to photograph it. The Android AVD
-(`voucher_hunt`) does exist, but the app on it still needs that same API.
+Capture against seeded demo data, never production — these documents go to
+partners, and a real customer's name, number or spend must not travel with them.
+The five hunt-flow shots already here (`customer-01` … `customer-05`) predate
+this note.
