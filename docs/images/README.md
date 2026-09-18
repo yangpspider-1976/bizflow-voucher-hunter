@@ -42,9 +42,27 @@ it is what puts a Pending row on both `staff-06-requests` and
 
 ## Still needed — the customer app (4)
 
-These four are from the Android app and are **not** scripted. They need the
-emulator running a dev build against a local API, which is a longer job than
-the dashboard shots. Capture portrait, one device.
+`scripts/capture-app-screenshots.mjs` takes these four, driving the emulator
+over adb and finding controls by dumping the view hierarchy rather than tapping
+fixed coordinates. It signs in using the code the dev build prints on screen,
+so no handset is needed:
+
+```
+npm run emulator:dev                          # Metro -> http://10.0.2.2:3000
+node scripts/capture-app-screenshots.mjs
+```
+
+**It has not been run, because no Android build completes on a Windows machine
+at this path.** Both `assembleDebug` and an emulator-only
+`-PreactNativeArchitectures=x86_64` build die at
+`ninja: error: Filename longer than 260 characters` on a
+`react-native-gesture-handler` shadow-node object file. Moving the repo will not
+fix it: that object path is 290 characters *relative to the build directory*,
+before any drive letter, so it is over the limit wherever the project lives.
+`LongPathsEnabled` is already `1` here and ninja ignores it. Take these four on
+Linux or a Mac, or from an EAS build installed on a device.
+
+What each shot should show, for whoever takes them:
 
 | File | Where | State to set up |
 |---|---|---|
